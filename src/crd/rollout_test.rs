@@ -1,4 +1,5 @@
 use super::*;
+use kube::CustomResourceExt;
 
 #[test]
 fn test_rollout_deserialize_from_yaml() {
@@ -52,4 +53,22 @@ spec:
     let traffic = canary.traffic_routing.unwrap();
     assert!(traffic.gateway_api.is_some());
     assert_eq!(traffic.gateway_api.unwrap().http_route, "test-route");
+}
+
+#[test]
+fn test_rollout_crd_schema_generation() {
+    // Generate CRD YAML that gets installed in Kubernetes
+    let crd = Rollout::crd();
+
+    assert_eq!(crd.spec.group, "kulta.io");
+    assert_eq!(crd.spec.names.kind, "Rollout");
+    assert_eq!(crd.spec.names.plural, "rollouts");
+
+    // Verify schema exists (validates CRD structure)
+    assert!(crd.spec.versions.len() > 0);
+    let version = &crd.spec.versions[0];
+    assert_eq!(version.name, "v1alpha1");
+    assert!(version.served);
+    assert!(version.storage);
+    assert!(version.schema.is_some());
 }
