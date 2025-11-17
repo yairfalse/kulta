@@ -1,4 +1,4 @@
-# KULTA 🏆
+# KULTA 
 
 **Progressive Delivery for Kubernetes - Simple, Fast, Observable**
 
