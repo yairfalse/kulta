@@ -1,9 +1,9 @@
 use futures::StreamExt;
-use kulta::controller::{reconcile, Context, ReconcileError};
-use kulta::crd::rollout::Rollout;
 use kube::runtime::controller::Action;
 use kube::runtime::{watcher, Controller};
 use kube::{Api, Client};
+use kulta::controller::{reconcile, Context, ReconcileError};
+use kulta::crd::rollout::Rollout;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
@@ -12,11 +12,7 @@ use tracing::{error, info};
 ///
 /// Determines how to handle reconciliation errors:
 /// - Requeue after delay (exponential backoff)
-pub fn error_policy(
-    _rollout: Arc<Rollout>,
-    error: &ReconcileError,
-    _ctx: Arc<Context>,
-) -> Action {
+pub fn error_policy(_rollout: Arc<Rollout>, error: &ReconcileError, _ctx: Arc<Context>) -> Action {
     error!("Reconcile error: {:?}", error);
     Action::requeue(Duration::from_secs(10))
 }

@@ -1,8 +1,7 @@
+use kube::runtime::controller::Action;
 use kulta::controller::{Context, ReconcileError};
 use kulta::crd::rollout::Rollout;
-use kube::runtime::controller::Action;
 use std::sync::Arc;
-use std::time::Duration;
 
 #[tokio::test]
 async fn test_error_policy_returns_requeue() {
