@@ -1,4 +1,5 @@
 use crate::crd::rollout::Rollout;
+use futures::FutureExt;
 use k8s_openapi::api::apps::v1::{ReplicaSet, ReplicaSetSpec};
 use k8s_openapi::api::core::v1::PodTemplateSpec;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
@@ -18,12 +19,26 @@ pub enum ReconcileError {
 }
 
 pub struct Context {
-    // Mock context for testing
+    pub client: kube::Client,
 }
 
 impl Context {
+    pub fn new(client: kube::Client) -> Self {
+        Context { client }
+    }
+
     pub fn new_mock() -> Self {
-        Context {}
+        // For testing, create a mock client
+        // In real tests, we'd use a fake API server
+        Context {
+            client: kube::Client::try_default()
+                .now_or_never()
+                .unwrap()
+                .unwrap_or_else(|_| {
+                    // If no kubeconfig, create a dummy client for unit tests
+                    panic!("Mock context requires kubeconfig or test environment")
+                }),
+        }
     }
 }
 
