@@ -74,3 +74,42 @@ async fn test_reconcile_creates_stable_replicaset() {
 
     assert!(result.is_ok());
 }
+
+#[tokio::test]
+async fn test_compute_pod_template_hash() {
+    // Test that we can generate stable pod-template-hash for ReplicaSets
+    let pod_template = k8s_openapi::api::core::v1::PodTemplateSpec {
+        metadata: Some(ObjectMeta {
+            labels: Some(
+                vec![("app".to_string(), "test-app".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..Default::default()
+        }),
+        spec: Some(k8s_openapi::api::core::v1::PodSpec {
+            containers: vec![k8s_openapi::api::core::v1::Container {
+                name: "app".to_string(),
+                image: Some("nginx:1.0".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+    };
+
+    let hash1 = compute_pod_template_hash(&pod_template);
+    let hash2 = compute_pod_template_hash(&pod_template);
+
+    // Same template should produce same hash
+    assert_eq!(hash1, hash2);
+    assert_eq!(hash1.len(), 10); // 10-character hash like Kubernetes
+
+    // Different template should produce different hash
+    let mut different_template = pod_template.clone();
+    if let Some(ref mut spec) = different_template.spec {
+        spec.containers[0].image = Some("nginx:2.0".to_string());
+    }
+
+    let hash3 = compute_pod_template_hash(&different_template);
+    assert_ne!(hash1, hash3);
+}
