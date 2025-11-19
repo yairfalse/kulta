@@ -381,6 +381,85 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
     let canary_rs = build_replicaset(&rollout, "canary", 0);
     ensure_replicaset_exists(&rs_api, &canary_rs, "canary", 0).await?;
 
+    // Update HTTPRoute with weighted backends (if configured)
+    if let Some(canary_strategy) = &rollout.spec.strategy.canary {
+        if let Some(traffic_routing) = &canary_strategy.traffic_routing {
+            if let Some(gateway_api_routing) = &traffic_routing.gateway_api {
+                let httproute_name = &gateway_api_routing.http_route;
+
+                info!(
+                    rollout = ?name,
+                    httproute = ?httproute_name,
+                    "Updating HTTPRoute with weighted backends"
+                );
+
+                // Build the weighted backend refs
+                let backend_refs = build_gateway_api_backend_refs(&rollout);
+
+                // Create JSON patch to update HTTPRoute's first rule's backendRefs
+                let patch_json = serde_json::json!({
+                    "spec": {
+                        "rules": [{
+                            "backendRefs": backend_refs
+                        }]
+                    }
+                });
+
+                // Create HTTPRoute API client using DynamicObject
+                use kube::api::{Api, Patch, PatchParams};
+                use kube::core::DynamicObject;
+                use kube::discovery::ApiResource;
+
+                let ar = ApiResource {
+                    group: "gateway.networking.k8s.io".to_string(),
+                    version: "v1".to_string(),
+                    api_version: "gateway.networking.k8s.io/v1".to_string(),
+                    kind: "HTTPRoute".to_string(),
+                    plural: "httproutes".to_string(),
+                };
+
+                let httproute_api: Api<DynamicObject> = Api::namespaced_with(ctx.client.clone(), &namespace, &ar);
+
+                // Apply the patch
+                match httproute_api
+                    .patch(
+                        httproute_name,
+                        &PatchParams::apply("kulta").force(),
+                        &Patch::Merge(&patch_json),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        info!(
+                            rollout = ?name,
+                            httproute = ?httproute_name,
+                            stable_weight = backend_refs.first().and_then(|b| b.weight),
+                            canary_weight = backend_refs.get(1).and_then(|b| b.weight),
+                            "HTTPRoute updated successfully"
+                        );
+                    }
+                    Err(kube::Error::Api(err)) if err.code == 404 => {
+                        error!(
+                            rollout = ?name,
+                            httproute = ?httproute_name,
+                            "HTTPRoute not found - skipping traffic routing update"
+                        );
+                        // Don't fail the reconciliation, just skip HTTPRoute update
+                    }
+                    Err(e) => {
+                        error!(
+                            error = ?e,
+                            rollout = ?name,
+                            httproute = ?httproute_name,
+                            "Failed to patch HTTPRoute"
+                        );
+                        return Err(ReconcileError::KubeError(e));
+                    }
+                }
+            }
+        }
+    }
+
     // Requeue after 5 minutes
     Ok(Action::requeue(Duration::from_secs(300)))
 }
