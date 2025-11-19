@@ -21,17 +21,10 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - uses: actions/cache@v4
+      # Use Swatinem's rust-cache - much better than manual caching
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          shared-key: "kulta-test"
 
       - name: Run tests
         run: cargo test --all-features
@@ -52,17 +45,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          shared-key: "kulta-release"
 
       - name: Build release binary
         run: cargo build --release --bin kulta
@@ -77,24 +62,29 @@ jobs:
   integration-test:
     name: Integration Tests (kind)
     runs-on: ubuntu-latest
+    # Skip on draft PRs to save cost
+    if: github.event_name == 'push' || !github.event.pull_request.draft
     needs: build
     steps:
       - uses: actions/checkout@v4
 
+      # Download pre-built binary instead of rebuilding
+      - name: Download KULTA binary
+        uses: actions/download-artifact@v4
+        with:
+          name: kulta-binary
+          path: /tmp/
+
+      - name: Make binary executable
+        run: chmod +x /tmp/kulta
+
+      # Still need Rust toolchain for gen-crd
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          shared-key: "kulta-integration"
 
       - name: Install kind
         run: |
@@ -119,12 +109,9 @@ jobs:
           cargo run --bin gen-crd > /tmp/rollout-crd.json
           kubectl apply -f /tmp/rollout-crd.json
 
-      - name: Build KULTA binary
-        run: cargo build --release --bin kulta
-
       - name: Run KULTA controller in background
         run: |
-          RUST_LOG=info ./target/release/kulta 2>&1 | tee /tmp/kulta-log.txt &
+          RUST_LOG=info /tmp/kulta 2>&1 | tee /tmp/kulta-log.txt &
           echo $! > /tmp/kulta-pid.txt
           sleep 5
 
