@@ -64,11 +64,8 @@ async fn test_reconcile_creates_stable_replicaset() {
         status: None,
     };
 
-    // Test that reconcile creates a stable ReplicaSet
-    // This test verifies the ReplicaSet is actually created (not just that reconcile returns Ok)
-
-    // For now, we'll test that build_replicaset is called correctly
-    // (Full integration test requires real K8s cluster)
+    // Test that build_replicaset creates a stable ReplicaSet with correct properties
+    // (Full reconcile integration test requires real K8s cluster - see CI integration tests)
     let stable_rs = build_replicaset(&rollout, "stable", rollout.spec.replicas);
 
     // Verify stable ReplicaSet has correct properties
@@ -79,9 +76,12 @@ async fn test_reconcile_creates_stable_replicaset() {
     assert_eq!(stable_rs.metadata.namespace.as_deref(), Some("default"));
     assert_eq!(stable_rs.spec.as_ref().unwrap().replicas, Some(3));
 
-    // Verify reconcile returns Ok
-    let result = reconcile(Arc::new(rollout), Arc::new(Context::new_mock())).await;
-    assert!(result.is_ok());
+    // Verify rollouts.kulta.io/managed label exists (prevents Deployment adoption)
+    let rs_labels = stable_rs.metadata.labels.as_ref().unwrap();
+    assert_eq!(
+        rs_labels.get("rollouts.kulta.io/managed"),
+        Some(&"true".to_string())
+    );
 }
 
 #[tokio::test]
@@ -280,10 +280,12 @@ async fn test_reconcile_creates_canary_replicaset() {
         Some(&"canary".to_string())
     );
 
-    // Test that reconcile logic would create canary (test verifies build logic)
-    // Full integration test requires real K8s cluster
-    let result = reconcile(Arc::new(rollout), Arc::new(Context::new_mock())).await;
-    assert!(result.is_ok());
+    // Verify canary has rollouts.kulta.io/managed label (prevents Deployment adoption)
+    let rs_labels = canary_rs.metadata.labels.as_ref().unwrap();
+    assert_eq!(
+        rs_labels.get("rollouts.kulta.io/managed"),
+        Some(&"true".to_string())
+    );
 }
 
 #[tokio::test]
