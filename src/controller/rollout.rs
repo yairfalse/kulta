@@ -370,6 +370,10 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
         "Reconciling Rollout"
     );
 
+    // TEMPORARILY DISABLED: ReplicaSet creation
+    // (Template data not persisting due to CRD schema issue - will fix with x-kubernetes-preserve-unknown-fields)
+    // For now, testing HTTPRoute update feature only
+    /*
     // Create ReplicaSet API client
     let rs_api: Api<ReplicaSet> = Api::namespaced(ctx.client.clone(), &namespace);
 
@@ -380,6 +384,7 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
     // Build and ensure canary ReplicaSet exists (0 replicas initially)
     let canary_rs = build_replicaset(&rollout, "canary", 0);
     ensure_replicaset_exists(&rs_api, &canary_rs, "canary", 0).await?;
+    */
 
     // Update HTTPRoute with weighted backends (if configured)
     if let Some(canary_strategy) = &rollout.spec.strategy.canary {
@@ -420,11 +425,11 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
 
                 let httproute_api: Api<DynamicObject> = Api::namespaced_with(ctx.client.clone(), &namespace, &ar);
 
-                // Apply the patch
+                // Apply the patch (Merge patch doesn't support force)
                 match httproute_api
                     .patch(
                         httproute_name,
-                        &PatchParams::apply("kulta").force(),
+                        &PatchParams::default(),
                         &Patch::Merge(&patch_json),
                     )
                     .await
