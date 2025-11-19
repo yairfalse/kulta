@@ -706,7 +706,11 @@ async fn test_convert_to_gateway_api_backend_refs() {
                         set_weight: Some(20),
                         pause: None,
                     }],
-                    traffic_routing: None, // No HTTPRoute for ReplicaSet unit tests
+                    traffic_routing: Some(TrafficRouting {
+                        gateway_api: Some(GatewayAPIRouting {
+                            http_route: "test-route".to_string(),
+                        }),
+                    }),
                 }),
             },
         },
@@ -795,7 +799,11 @@ async fn test_update_httproute_with_weighted_backends() {
                         set_weight: Some(20),
                         pause: None,
                     }],
-                    traffic_routing: None, // No HTTPRoute for ReplicaSet unit tests
+                    traffic_routing: Some(TrafficRouting {
+                        gateway_api: Some(GatewayAPIRouting {
+                            http_route: "test-route".to_string(),
+                        }),
+                    }),
                 }),
             },
         },
