@@ -217,6 +217,35 @@ pub fn build_gateway_api_backend_refs(
     ]
 }
 
+/// Update HTTPRoute's backend refs with weighted backends from Rollout
+///
+/// This function mutates the HTTPRoute by updating the first rule's backend_refs
+/// with the weighted backends calculated from the Rollout's current step.
+///
+/// # Arguments
+/// * `rollout` - The Rollout resource with traffic weights
+/// * `httproute` - The HTTPRoute resource to update (mutated in place)
+///
+/// # Behavior
+/// - Updates the first rule's backend_refs (assumes single rule)
+/// - Replaces existing backend_refs with weighted stable + canary
+/// - Uses build_gateway_api_backend_refs() for the conversion
+pub fn update_httproute_backends(
+    rollout: &Rollout,
+    httproute: &mut gateway_api::apis::standard::httproutes::HTTPRoute,
+) {
+    // Get the weighted backend refs from rollout
+    let backend_refs = build_gateway_api_backend_refs(rollout);
+
+    // Update the first rule's backend_refs
+    // (KULTA assumes HTTPRoute has exactly one rule - the traffic splitting rule)
+    if let Some(rules) = httproute.spec.rules.as_mut() {
+        if let Some(first_rule) = rules.first_mut() {
+            first_rule.backend_refs = Some(backend_refs);
+        }
+    }
+}
+
 /// Calculate traffic weights for stable and canary based on Rollout status
 ///
 /// Returns (stable_weight, canary_weight) as percentages

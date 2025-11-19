@@ -785,3 +785,92 @@ async fn test_gateway_api_backend_refs_no_canary_strategy() {
     let gateway_backend_refs = build_gateway_api_backend_refs(&rollout);
     assert_eq!(gateway_backend_refs.len(), 0);
 }
+
+/*
+ * TODO: Re-enable when gateway-api crate matches our k8s-openapi version
+ * Currently blocked by: gateway-api 0.10 uses k8s-openapi 0.21, but we use 0.23
+ * This test will be replaced by integration tests once we have a kind cluster setup
+ *
+#[tokio::test]
+async fn test_update_httproute_with_weighted_backends() {
+    // Test that we can update an HTTPRoute's backend refs with weighted backends
+    use gateway_api::apis::standard::httproutes::{HTTPRoute, HTTPRouteSpec, HTTPRouteRules};
+
+    // Create a Rollout at step 0 (20% canary)
+    let rollout = Rollout {
+        metadata: ObjectMeta {
+            name: Some("test-rollout".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector::default(),
+            template: k8s_openapi::api::core::v1::PodTemplateSpec::default(),
+            strategy: RolloutStrategy {
+                canary: Some(CanaryStrategy {
+                    canary_service: "test-app-canary".to_string(),
+                    stable_service: "test-app-stable".to_string(),
+                    steps: vec![CanaryStep {
+                        set_weight: Some(20),
+                        pause: None,
+                    }],
+                    traffic_routing: Some(TrafficRouting {
+                        gateway_api: Some(GatewayAPIRouting {
+                            http_route: "test-route".to_string(),
+                        }),
+                    }),
+                }),
+            },
+        },
+        status: Some(RolloutStatus {
+            current_step_index: Some(0), // 20% canary
+            ..Default::default()
+        }),
+    };
+
+    // Create a mock HTTPRoute (what exists in K8s)
+    let mut httproute = HTTPRoute {
+        metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
+            name: Some("test-route".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: HTTPRouteSpec {
+            rules: Some(vec![HTTPRouteRules {
+                backend_refs: None, // Currently no backends
+                ..Default::default()
+            }]),
+            ..Default::default()
+        },
+        status: None,
+    };
+
+    // Update the HTTPRoute with weighted backends from rollout
+    update_httproute_backends(&rollout, &mut httproute);
+
+    // Verify the HTTPRoute now has weighted backend refs
+    let rules = httproute.spec.rules.as_ref().expect("Should have rules");
+    assert_eq!(rules.len(), 1);
+
+    let backend_refs = rules[0]
+        .backend_refs
+        .as_ref()
+        .expect("Should have backend_refs");
+    assert_eq!(backend_refs.len(), 2);
+
+    // Verify stable backend (80%)
+    let stable = backend_refs
+        .iter()
+        .find(|b| b.name == "test-app-stable")
+        .expect("Should have stable backend");
+    assert_eq!(stable.weight, Some(80));
+
+    // Verify canary backend (20%)
+    let canary = backend_refs
+        .iter()
+        .find(|b| b.name == "test-app-canary")
+        .expect("Should have canary backend");
+    assert_eq!(canary.weight, Some(20));
+}
+*/
