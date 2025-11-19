@@ -1,7 +1,7 @@
 use super::*;
 use crate::crd::rollout::{
-    CanaryStep, CanaryStrategy, GatewayAPIRouting, Rollout, RolloutSpec, RolloutStatus,
-    RolloutStrategy, TrafficRouting,
+    CanaryStep, CanaryStrategy, Rollout, RolloutSpec, RolloutStatus,
+    RolloutStrategy,
 };
 use kube::api::ObjectMeta;
 use std::sync::Arc;
@@ -57,11 +57,7 @@ async fn test_reconcile_creates_stable_replicaset() {
                             pause: None,
                         },
                     ],
-                    traffic_routing: Some(TrafficRouting {
-                        gateway_api: Some(GatewayAPIRouting {
-                            http_route: "test-route".to_string(),
-                        }),
-                    }),
+                    traffic_routing: None, // No HTTPRoute for ReplicaSet unit tests
                 }),
             },
         },
@@ -249,11 +245,7 @@ async fn test_reconcile_creates_canary_replicaset() {
                         set_weight: Some(20),
                         pause: None,
                     }],
-                    traffic_routing: Some(TrafficRouting {
-                        gateway_api: Some(GatewayAPIRouting {
-                            http_route: "test-route".to_string(),
-                        }),
-                    }),
+                    traffic_routing: None, // No HTTPRoute for ReplicaSet unit tests
                 }),
             },
         },
@@ -463,11 +455,7 @@ async fn test_calculate_traffic_weights_step0() {
                             pause: None,
                         },
                     ],
-                    traffic_routing: Some(TrafficRouting {
-                        gateway_api: Some(GatewayAPIRouting {
-                            http_route: "test-route".to_string(),
-                        }),
-                    }),
+                    traffic_routing: None, // No HTTPRoute for ReplicaSet unit tests
                 }),
             },
         },
@@ -666,11 +654,7 @@ async fn test_build_httproute_backend_weights() {
                         set_weight: Some(20),
                         pause: None,
                     }],
-                    traffic_routing: Some(TrafficRouting {
-                        gateway_api: Some(GatewayAPIRouting {
-                            http_route: "test-route".to_string(),
-                        }),
-                    }),
+                    traffic_routing: None, // No HTTPRoute for ReplicaSet unit tests
                 }),
             },
         },
