@@ -13,7 +13,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Error)]
 pub enum ReconcileError {
@@ -76,6 +76,7 @@ pub fn compute_pod_template_hash(template: &PodTemplateSpec) -> String {
 /// - Return Ok if ReplicaSet already exists
 /// - Create ReplicaSet if it doesn't exist (404)
 /// - Return Err on other API errors
+#[allow(dead_code)] // Temporarily disabled while CRD schema is fixed
 async fn ensure_replicaset_exists(
     rs_api: &Api<ReplicaSet>,
     rs: &ReplicaSet,
@@ -402,6 +403,9 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
                 let backend_refs = build_gateway_api_backend_refs(&rollout);
 
                 // Create JSON patch to update HTTPRoute's first rule's backendRefs
+                // NOTE: KULTA assumes the HTTPRoute has exactly one rule for traffic splitting
+                // This Merge patch only updates the backendRefs field of the first rule,
+                // preserving other fields like matches, filters, etc.
                 let patch_json = serde_json::json!({
                     "spec": {
                         "rules": [{
@@ -444,7 +448,7 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
                         );
                     }
                     Err(kube::Error::Api(err)) if err.code == 404 => {
-                        error!(
+                        warn!(
                             rollout = ?name,
                             httproute = ?httproute_name,
                             "HTTPRoute not found - skipping traffic routing update"
