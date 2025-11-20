@@ -1,172 +1,161 @@
-# KULTA 
+# KULTA
 
-**Progressive Delivery for Kubernetes - Simple, Fast, Observable**
+**Kubernetes Progressive Delivery Controller - Early Stages Learning Project**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
-[![Gateway API](https://img.shields.io/badge/Gateway%20API-v1.2.0-purple.svg)](https://gateway-api.sigs.k8s.io/)
-[![CDEvents](https://img.shields.io/badge/CDEvents-v0.4.1-orange.svg)](https://cdevents.dev)
-
-[![Tokio](https://img.shields.io/badge/async-tokio-blue.svg?logo=rust)](https://tokio.rs)
-[![Kubernetes](https://img.shields.io/badge/K8s-kube--rs-326CE5.svg?logo=kubernetes&logoColor=white)](https://kube.rs)
-[![Prometheus](https://img.shields.io/badge/metrics-prometheus-E6522C.svg?logo=prometheus&logoColor=white)](https://prometheus.io)
 
 ---
 
-## What is KULTA?
+## What is This?
 
-A progressive delivery controller for Kubernetes - deploy safely with canary rollouts, no service mesh required.
+A Kubernetes controller for progressive delivery (canary rollouts) - **built to learn Rust and K8s controllers**.
 
-**What's Actually Built:**
-- Gateway API-native traffic routing (no service mesh!)
-- Automated canary analysis (Prometheus metrics)
-- CDEvents emission (full pipeline observability)
-- Auto-rollback on errors
-- Written in Rust for performance
+This is an **early-stage learning project**. I'm building it to understand:
+- How Kubernetes controllers work (kube-rs)
+- Rust async programming (tokio)
+- Progressive delivery patterns
+- Gateway API routing
 
-**Why Build This?**
-- Learn Rust + Kubernetes controllers (building on RAUTA)
-- Explore progressive delivery patterns
-- Make CD pipelines observable via CDEvents
-- Have fun building systems software
+**Current Status**: Basic canary rollout functionality working, actively being developed.
 
 ---
 
-## What Works
+## What Actually Works
 
-**Progressive Delivery** (Planned)
-- Canary rollouts (10% → 50% → 100%)
-- Blue-green deployments
-- Automated traffic shifting via Gateway API
-- Manual pause/resume controls
+**Implemented (as of now)**:
+- ✅ Custom Resource Definition (Rollout CRD)
+- ✅ Controller reconciliation loop
+- ✅ ReplicaSet management (stable + canary)
+- ✅ Gateway API HTTPRoute traffic splitting
+- ✅ Automatic step progression through canary stages
+- ✅ Time-based pause durations (`pause: { duration: "5m" }`)
+- ✅ Manual promotion support (indefinite pauses)
+- ✅ 36 unit tests passing
 
-**Safety & Analysis** (Planned)
+**Example Rollout**:
+```yaml
+apiVersion: kulta.io/v1alpha1
+kind: Rollout
+metadata:
+  name: my-app
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+  strategy:
+    canary:
+      stableService: my-app-stable
+      canaryService: my-app-canary
+      steps:
+      - setWeight: 20   # Start with 20% canary traffic
+        pause:
+          duration: "5m"  # Wait 5 minutes
+      - setWeight: 50   # Move to 50% canary traffic
+        pause: {}       # Indefinite pause (manual promotion required)
+      - setWeight: 100  # Complete rollout
+      trafficRouting:
+        gatewayAPI:
+          httpRoute: my-app-route
+```
+
+**Manual promotion** (for indefinite pauses):
+```bash
+kubectl annotate rollout my-app kulta.io/promote=true
+```
+
+**What happens**:
+1. Controller creates stable and canary ReplicaSets
+2. Updates HTTPRoute weights (80/20 split)
+3. Waits 5 minutes
+4. Updates HTTPRoute weights (50/50 split)
+5. Waits for manual promotion
+6. Updates HTTPRoute weights (0/100 - fully canary)
+7. Rollout complete
+
+---
+
+## Not Yet Implemented
+
+**Planned but not built**:
 - Prometheus metrics analysis
 - Automated rollback on errors
-- Configurable thresholds (error rate, latency)
+- Blue-green deployments
 - Health checking integration
+- CDEvents emission
 
-**Observability** (Planned)
-- CDEvents emission (every deployment step)
-- Git commit → deployment correlation
-- Full pipeline tracing (with Tekton/CDviz)
-- Prometheus metrics
-
-**Gateway API Integration** (Planned)
-- HTTPRoute weight manipulation
-- Works with RAUTA or any Gateway API implementation
-- No service mesh sidecars required
-- Simple, transparent traffic routing
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│   Developer Workflow                        │
-├─────────────────────────────────────────────┤
-│   git push                                  │
-│   ↓                                         │
-│   Tekton/Jenkins (CI)                       │
-│   ↓ (emits CDEvents: artifact.published)    │
-│   Argo CD / FluxCD (GitOps)                 │
-│   ↓ (syncs Rollout YAML from git)           │
-│   KULTA Controller                          │
-│   ├─ Creates Canary ReplicaSet              │
-│   ├─ Emits: deployment.started (CDEvent)    │
-│   ├─ Updates Gateway API HTTPRoute weights  │
-│   ├─ Queries Prometheus for health          │
-│   ├─ Auto-rollback if errors OR             │
-│   └─ Advance: 10% → 50% → 100%              │
-│   ↓                                         │
-│   RAUTA / Gateway API                       │
-│   ↓ (routes traffic based on weights)       │
-│   CDviz / Observability                     │
-│   └─ Shows: git commit → deploy → health    │
-└─────────────────────────────────────────────┘
-```
-
-**The Stack:**
-```
-RAUTA  (Gateway API routing)
-  ↓ routes traffic
-KULTA  (Progressive delivery)
-  ↓ manages deployments
-Both: Rust + Gateway API native = Simple, fast, integrated
-```
+These are learning goals, not promises. I'm building features as I learn the concepts.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Clone and build
+# Clone repo
 git clone https://github.com/yairfalse/kulta
 cd kulta
+
+# Build
 cargo build --release
 
-# Run controller (requires KUBECONFIG)
-./target/release/kulta
+# Generate CRD
+cargo run --bin gen-crd > /tmp/rollout-crd.yaml
 
-# Deploy in Kubernetes
-kubectl apply -f manifests/
+# Install CRD in your cluster
+kubectl apply -f /tmp/rollout-crd.yaml
+
+# Install Gateway API CRDs (required)
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+
+# Run controller locally (requires KUBECONFIG)
+RUST_LOG=info cargo run --bin kulta
+
+# Apply example rollout
+kubectl apply -f examples/basic-rollout.yaml
 ```
 
-**Requirements:**
+**Requirements**:
 - Rust 1.75+
-- Kubernetes cluster (kind/minikube/production)
-- Gateway API CRDs installed
-- KUBECONFIG configured
+- Kubernetes cluster (kind/minikube/real cluster)
+- Gateway API CRDs
+- A Gateway API implementation (like RAUTA, or any other)
 
 ---
 
-## Design Choices
+## Why Gateway API?
 
-**Why Progressive Delivery instead of just GitOps?**
-
-GitOps (Argo CD, FluxCD) syncs what's in git to the cluster. Progressive delivery controls **how** changes roll out - gradually, safely, with automatic rollback.
-
-**Why Gateway API instead of Service Mesh?**
-
-Service meshes (Istio, Linkerd) add complexity:
-- Sidecar containers (+50MB memory per pod)
-- Complex configuration (VirtualService, DestinationRule, etc.)
-- Hard to debug (traffic routing in mesh)
-
-Gateway API is simpler:
-- Just HTTPRoute weight changes
-- No sidecars
-- `kubectl get httproute` shows traffic splits
-- Works with RAUTA or any Gateway API implementation
-
-**Why CDEvents?**
-
-Current state: CI emits events (Tekton, Jenkins), CD doesn't (Argo Rollouts, Flagger). Your pipeline visibility is broken.
-
-KULTA bridges the gap:
-- Emits CDEvents at every deployment step
-- Links git commit → build → deploy → health
-- Works with CDviz for full pipeline observability
-
-**Why Rust?**
-
-- Memory safety (no segfaults)
-- Strong type system (catch bugs at compile time)
-- Excellent async ecosystem (tokio)
-- Performance (fast reconciliation loops)
-- Building on RAUTA knowledge
+I'm using Gateway API for traffic routing instead of a service mesh because:
+- **Simpler**: Just HTTPRoute weight changes, no sidecars
+- **Transparent**: `kubectl get httproute` shows traffic splits
+- **Standard**: K8s sig-network official API
 
 ---
 
-## Technology Stack
+## Architecture
 
-- **tokio** - Async runtime
-- **kube-rs** - Kubernetes API client
-- **gateway-api** - Official Gateway API CRD types
-- **prometheus** - Metrics analysis
-- **cdevents** - Event emission
-- **serde** - Serialization
+```
+User applies Rollout YAML
+    ↓
+KULTA Controller reconciles
+    ├─ Creates stable ReplicaSet
+    ├─ Creates canary ReplicaSet
+    ├─ Updates HTTPRoute weights
+    └─ Progresses through steps
+    ↓
+Gateway API implementation (RAUTA, etc.)
+    ↓
+Routes traffic based on weights
+```
 
 ---
 
@@ -178,53 +167,61 @@ KULTA bridges the gap:
 # Build
 cargo build
 
-# Run tests
+# Run all tests
 cargo test
 
 # Format
 cargo fmt
 
 # Lint
-cargo clippy -- -D warnings
+cargo clippy
 ```
 
 ### TDD Workflow
 
-All features follow Test-Driven Development:
+I'm following Test-Driven Development:
+1. Write failing test (RED)
+2. Minimal implementation (GREEN)
+3. Refactor
+4. Commit
 
-1. **RED**: Write failing test
-2. **GREEN**: Minimal implementation to pass
-3. **REFACTOR**: Improve code quality
-4. **COMMIT**: Small, focused commits
+Check `docs/design/` for implementation plans.
 
-See `CLAUDE.md` for detailed guidelines.
+---
+
+## Tech Stack
+
+- **tokio** - Async runtime
+- **kube-rs** - Kubernetes API client
+- **gateway-api** - Gateway API CRD types
+- **chrono** - Timestamp handling for pauses
+- **serde** - Serialization
 
 ---
 
 ## Naming
 
-**Kulta** (Finnish: "gold") - Part of the Finnish tool naming theme:
-- **RAUTA**: Gateway API routing ⚙️ (iron)
-- **KULTA**: Progressive delivery 🏆 (gold - your precious deployments)
-- **TAPIO**: Kubernetes observer 🌲
-- **AHTI**: Event correlation 🌊
+**Kulta** (Finnish: "gold") - Part of my Finnish tool naming theme:
+- **RAUTA** (iron) - Gateway API routing
+- **KULTA** (gold) - Progressive delivery
 
-Iron routes your traffic, Gold protects your deployments.
+---
+
+## Current Focus
+
+Right now I'm working on:
+- Getting time-based pauses working reliably
+- Testing with real deployments in kind
+- Understanding controller patterns better
+
+This is a **learning project** - I'm figuring things out as I go. Code quality will improve as I learn more Rust and K8s patterns.
 
 ---
 
 ## License
 
-Apache 2.0 - Free and open source.
+Apache 2.0
 
 ---
 
-## Links
-
-- **GitHub**: https://github.com/yairfalse/kulta
-- **RAUTA**: https://github.com/yairfalse/rauta
-- **CDEvents**: https://cdevents.dev
-
----
-
-**Built for fun. Keeps deployments safe.** 🦀
+**Learning Rust. Learning K8s. Building tools.** 🦀
