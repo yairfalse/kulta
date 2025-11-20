@@ -472,7 +472,10 @@ pub fn advance_to_next_step(rollout: &Rollout) -> crate::crd::rollout::RolloutSt
     } else {
         (
             "Progressing".to_string(),
-            format!("Advanced to step {} ({}% traffic)", next_step_index, next_weight),
+            format!(
+                "Advanced to step {} ({}% traffic)",
+                next_step_index, next_weight
+            ),
         )
     };
 
@@ -698,7 +701,7 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
         );
 
         // Create Rollout API client
-        use kube::api::{Api, PatchParams, Patch};
+        use kube::api::{Api, Patch, PatchParams};
         let rollout_api: Api<Rollout> = Api::namespaced(ctx.client.clone(), &namespace);
 
         // Create status subresource patch
@@ -708,11 +711,7 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
 
         // Patch the status subresource
         match rollout_api
-            .patch_status(
-                &name,
-                &PatchParams::default(),
-                &Patch::Merge(&status_patch),
-            )
+            .patch_status(&name, &PatchParams::default(), &Patch::Merge(&status_patch))
             .await
         {
             Ok(_) => {

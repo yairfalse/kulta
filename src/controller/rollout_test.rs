@@ -1019,7 +1019,10 @@ async fn test_initialize_rollout_status() {
     assert_eq!(status.current_step_index, Some(0));
     assert_eq!(status.phase, Some("Progressing".to_string()));
     assert_eq!(status.current_weight, Some(20));
-    assert_eq!(status.message, Some("Starting canary rollout at step 0 (20% traffic)".to_string()));
+    assert_eq!(
+        status.message,
+        Some("Starting canary rollout at step 0 (20% traffic)".to_string())
+    );
 }
 
 #[tokio::test]
@@ -1164,7 +1167,10 @@ async fn test_advance_to_next_step() {
     assert_eq!(new_status.current_step_index, Some(1));
     assert_eq!(new_status.current_weight, Some(50));
     assert_eq!(new_status.phase, Some("Progressing".to_string()));
-    assert_eq!(new_status.message, Some("Advanced to step 1 (50% traffic)".to_string()));
+    assert_eq!(
+        new_status.message,
+        Some("Advanced to step 1 (50% traffic)".to_string())
+    );
 }
 
 #[tokio::test]
@@ -1214,7 +1220,10 @@ async fn test_advance_to_final_step() {
 
     // When reaching final step (100% canary), phase should be "Completed"
     assert_eq!(new_status.phase, Some("Completed".to_string()));
-    assert_eq!(new_status.message, Some("Rollout completed: 100% traffic to canary".to_string()));
+    assert_eq!(
+        new_status.message,
+        Some("Rollout completed: 100% traffic to canary".to_string())
+    );
 }
 
 // TDD Cycle 17: Integrate Step Progression into Reconcile
