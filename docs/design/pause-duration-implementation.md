@@ -460,36 +460,37 @@ use chrono::{DateTime, Utc};
 
 **Completed**:
 - ✅ Duration parser implementation
-- ✅ 6 unit tests for duration parsing
 - ✅ CRD field for pause start time
-- ✅ 1 commit pushed
-
-**In Progress**:
-- 🚧 Time-based progression logic
+- ✅ chrono dependency added
+- ✅ Time-based progression logic in should_progress_to_next_step()
+- ✅ Pause start time tracking in advance_to_next_step()
+- ✅ Manual promotion annotation support (has_promote_annotation)
+- ✅ 12 unit tests (6 for duration parsing, 4 for time-based progression, 2 for manual promotion)
+- ✅ All 36 tests passing
+- ✅ Changes committed (commit 2565dbd)
+- ✅ Changes pushed to main
 
 **Remaining**:
-- ⏳ Set pause start time on step advance
-- ⏳ Manual promotion annotation support
-- ⏳ Unit tests for progression logic
-- ⏳ Integration tests
-- ⏳ Push all changes
+- ⏳ Integration test with real pauses (requires kind cluster deployment)
 - ⏳ Update CI to test new features
 
-**Total Progress**: ~20% complete
+**Total Progress**: ~90% complete (implementation done, integration testing remains)
 
 ---
 
 ## Next Steps
 
-1. Add `chrono` dependency to `Cargo.toml`
-2. Implement time-based progression in `should_progress_to_next_step()`
-3. Write tests (TDD RED phase)
-4. Make tests pass (TDD GREEN phase)
-5. Implement pause start time tracking in `advance_to_next_step()`
-6. Implement manual promotion annotation support
-7. Write integration tests
-8. Push all changes
-9. Verify CI passes
+1. ✅ ~~Add `chrono` dependency to `Cargo.toml`~~
+2. ✅ ~~Implement time-based progression in `should_progress_to_next_step()`~~
+3. ✅ ~~Write tests (TDD RED phase)~~
+4. ✅ ~~Make tests pass (TDD GREEN phase)~~
+5. ✅ ~~Implement pause start time tracking in `advance_to_next_step()`~~
+6. ✅ ~~Implement manual promotion annotation support~~
+7. ⏳ Write integration tests (deploy to kind, test real pauses)
+8. ✅ ~~Push all changes~~
+9. ⏳ Verify CI passes
+
+**Next**: Integration testing with real pauses in kind cluster
 
 ---
 
@@ -512,6 +513,6 @@ use chrono::{DateTime, Utc};
 
 ---
 
-**Last Updated**: 2025-11-20
+**Last Updated**: 2025-11-21
 **Author**: Claude + Yair
-**Commits**: 1 (2dbc1ac)
+**Commits**: 3 (2dbc1ac, 708a278, 2565dbd)
