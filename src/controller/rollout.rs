@@ -380,6 +380,36 @@ pub fn should_progress_to_next_step(rollout: &Rollout) -> bool {
     true
 }
 
+/// Compute the desired status for a Rollout
+///
+/// This is the main function called by reconcile() to determine what status
+/// should be written to K8s. It orchestrates initialization and progression.
+///
+/// Logic:
+/// - If no status: initialize with step 0
+/// - If status exists and should progress: advance to next step
+/// - Otherwise: keep current status
+///
+/// # Arguments
+/// * `rollout` - The Rollout to compute status for
+///
+/// # Returns
+/// The desired RolloutStatus that should be written to K8s
+pub fn compute_desired_status(rollout: &Rollout) -> crate::crd::rollout::RolloutStatus {
+    // If no status, initialize
+    if rollout.status.is_none() {
+        return initialize_rollout_status(rollout);
+    }
+
+    // If should progress, advance to next step
+    if should_progress_to_next_step(rollout) {
+        return advance_to_next_step(rollout);
+    }
+
+    // Otherwise, return current status (no change)
+    rollout.status.as_ref().unwrap().clone()
+}
+
 /// Advance rollout to next step
 ///
 /// Calculates new status with:
@@ -650,6 +680,54 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
                         return Err(ReconcileError::KubeError(e));
                     }
                 }
+            }
+        }
+    }
+
+    // Compute desired status (initialize or progress steps)
+    let desired_status = compute_desired_status(&rollout);
+
+    // Update Rollout status in Kubernetes if it changed
+    if rollout.status.as_ref() != Some(&desired_status) {
+        info!(
+            rollout = ?name,
+            current_step = ?desired_status.current_step_index,
+            current_weight = ?desired_status.current_weight,
+            phase = ?desired_status.phase,
+            "Updating Rollout status"
+        );
+
+        // Create Rollout API client
+        use kube::api::{Api, PatchParams, Patch};
+        let rollout_api: Api<Rollout> = Api::namespaced(ctx.client.clone(), &namespace);
+
+        // Create status subresource patch
+        let status_patch = serde_json::json!({
+            "status": desired_status
+        });
+
+        // Patch the status subresource
+        match rollout_api
+            .patch_status(
+                &name,
+                &PatchParams::default(),
+                &Patch::Merge(&status_patch),
+            )
+            .await
+        {
+            Ok(_) => {
+                info!(
+                    rollout = ?name,
+                    "Status updated successfully"
+                );
+            }
+            Err(e) => {
+                error!(
+                    error = ?e,
+                    rollout = ?name,
+                    "Failed to update status"
+                );
+                return Err(ReconcileError::KubeError(e));
             }
         }
     }

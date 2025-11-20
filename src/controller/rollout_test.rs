@@ -1216,3 +1216,147 @@ async fn test_advance_to_final_step() {
     assert_eq!(new_status.phase, Some("Completed".to_string()));
     assert_eq!(new_status.message, Some("Rollout completed: 100% traffic to canary".to_string()));
 }
+
+// TDD Cycle 17: Integrate Step Progression into Reconcile
+// RED: Test that reconcile updates Rollout status
+
+#[tokio::test]
+async fn test_compute_desired_status_for_new_rollout() {
+    // Test that a new Rollout (no status) gets initialized
+    let rollout = Rollout {
+        metadata: ObjectMeta {
+            name: Some("test-rollout".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector::default(),
+            template: k8s_openapi::api::core::v1::PodTemplateSpec::default(),
+            strategy: RolloutStrategy {
+                canary: Some(CanaryStrategy {
+                    canary_service: "test-app-canary".to_string(),
+                    stable_service: "test-app-stable".to_string(),
+                    steps: vec![
+                        CanaryStep {
+                            set_weight: Some(20),
+                            pause: None,
+                        },
+                        CanaryStep {
+                            set_weight: Some(50),
+                            pause: None,
+                        },
+                    ],
+                    traffic_routing: None,
+                }),
+            },
+        },
+        status: None, // No status - should be initialized
+    };
+
+    // Function to test: compute_desired_status
+    // Returns the status that should be written to K8s
+    let desired_status = compute_desired_status(&rollout);
+
+    // Should initialize to step 0
+    assert_eq!(desired_status.current_step_index, Some(0));
+    assert_eq!(desired_status.current_weight, Some(20));
+    assert_eq!(desired_status.phase, Some("Progressing".to_string()));
+}
+
+#[tokio::test]
+async fn test_compute_desired_status_progresses_step() {
+    // Test that a Rollout at step 0 progresses to step 1
+    let rollout = Rollout {
+        metadata: ObjectMeta {
+            name: Some("test-rollout".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector::default(),
+            template: k8s_openapi::api::core::v1::PodTemplateSpec::default(),
+            strategy: RolloutStrategy {
+                canary: Some(CanaryStrategy {
+                    canary_service: "test-app-canary".to_string(),
+                    stable_service: "test-app-stable".to_string(),
+                    steps: vec![
+                        CanaryStep {
+                            set_weight: Some(20),
+                            pause: None, // No pause - should progress
+                        },
+                        CanaryStep {
+                            set_weight: Some(50),
+                            pause: None,
+                        },
+                    ],
+                    traffic_routing: None,
+                }),
+            },
+        },
+        status: Some(RolloutStatus {
+            current_step_index: Some(0),
+            current_weight: Some(20),
+            phase: Some("Progressing".to_string()),
+            ..Default::default()
+        }),
+    };
+
+    // Should progress to step 1
+    let desired_status = compute_desired_status(&rollout);
+
+    assert_eq!(desired_status.current_step_index, Some(1));
+    assert_eq!(desired_status.current_weight, Some(50));
+    assert_eq!(desired_status.phase, Some("Progressing".to_string()));
+}
+
+#[tokio::test]
+async fn test_compute_desired_status_respects_pause() {
+    // Test that a Rollout at a paused step doesn't progress
+    let rollout = Rollout {
+        metadata: ObjectMeta {
+            name: Some("test-rollout".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector::default(),
+            template: k8s_openapi::api::core::v1::PodTemplateSpec::default(),
+            strategy: RolloutStrategy {
+                canary: Some(CanaryStrategy {
+                    canary_service: "test-app-canary".to_string(),
+                    stable_service: "test-app-stable".to_string(),
+                    steps: vec![
+                        CanaryStep {
+                            set_weight: Some(20),
+                            pause: Some(crate::crd::rollout::PauseDuration {
+                                duration: Some("5m".to_string()),
+                            }),
+                        },
+                        CanaryStep {
+                            set_weight: Some(50),
+                            pause: None,
+                        },
+                    ],
+                    traffic_routing: None,
+                }),
+            },
+        },
+        status: Some(RolloutStatus {
+            current_step_index: Some(0),
+            current_weight: Some(20),
+            phase: Some("Paused".to_string()),
+            ..Default::default()
+        }),
+    };
+
+    // Should NOT progress (paused)
+    let desired_status = compute_desired_status(&rollout);
+
+    // Should stay at step 0
+    assert_eq!(desired_status.current_step_index, Some(0));
+    assert_eq!(desired_status.current_weight, Some(20));
+    assert_eq!(desired_status.phase, Some("Paused".to_string()));
+}

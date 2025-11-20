@@ -119,7 +119,7 @@ pub struct GatewayAPIRouting {
 }
 
 /// Status of the Rollout
-#[derive(Serialize, Deserialize, Clone, Debug, Default, JsonSchema)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, JsonSchema)]
 pub struct RolloutStatus {
     /// Total number of non-terminated pods
     #[serde(default)]
