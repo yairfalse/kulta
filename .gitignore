@@ -66,8 +66,9 @@ temp/
 
 # Documentation (research notes - not for commit)
 docs/
-# But allow ADRs (architectural decision records)
+# But allow ADRs and design docs
 !docs/adr/
+!docs/design/
 
 
 # Added by cargo
