@@ -1369,3 +1369,47 @@ async fn test_compute_desired_status_respects_pause() {
     assert_eq!(desired_status.current_weight, Some(20));
     assert_eq!(desired_status.phase, Some("Paused".to_string()));
 }
+
+// TDD Cycle 18: Pause Duration Parsing
+
+#[test]
+fn test_parse_duration_seconds() {
+    use std::time::Duration;
+
+    let duration = parse_duration("30s").expect("Should parse '30s'");
+    assert_eq!(duration, Duration::from_secs(30));
+}
+
+#[test]
+fn test_parse_duration_minutes() {
+    use std::time::Duration;
+
+    let duration = parse_duration("5m").expect("Should parse '5m'");
+    assert_eq!(duration, Duration::from_secs(300)); // 5 * 60
+}
+
+#[test]
+fn test_parse_duration_hours() {
+    use std::time::Duration;
+
+    let duration = parse_duration("2h").expect("Should parse '2h'");
+    assert_eq!(duration, Duration::from_secs(7200)); // 2 * 3600
+}
+
+#[test]
+fn test_parse_duration_invalid_unit() {
+    let duration = parse_duration("5x");
+    assert!(duration.is_none(), "Should return None for invalid unit");
+}
+
+#[test]
+fn test_parse_duration_empty_string() {
+    let duration = parse_duration("");
+    assert!(duration.is_none(), "Should return None for empty string");
+}
+
+#[test]
+fn test_parse_duration_no_number() {
+    let duration = parse_duration("s");
+    assert!(duration.is_none(), "Should return None when no number");
+}

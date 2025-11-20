@@ -148,6 +148,10 @@ pub struct RolloutStatus {
     /// Human-readable message
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+
+    /// Timestamp when current pause started (RFC3339 format)
+    #[serde(rename = "pauseStartTime", skip_serializing_if = "Option::is_none")]
+    pub pause_start_time: Option<String>,
 }
 
 #[cfg(test)]

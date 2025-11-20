@@ -735,6 +735,40 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
     Ok(Action::requeue(Duration::from_secs(300)))
 }
 
+/// Parse a duration string like "5m", "30s", "1h" into std::time::Duration
+///
+/// Supported formats:
+/// - "30s" → 30 seconds
+/// - "5m" → 5 minutes
+/// - "2h" → 2 hours
+///
+/// # Arguments
+/// * `duration_str` - Duration string to parse
+///
+/// # Returns
+/// Some(Duration) if parse successful, None if invalid format
+pub fn parse_duration(duration_str: &str) -> Option<Duration> {
+    let duration_str = duration_str.trim();
+
+    if duration_str.is_empty() {
+        return None;
+    }
+
+    // Get the last character (unit)
+    let unit = duration_str.chars().last()?;
+
+    // Get the numeric part
+    let number_str = &duration_str[..duration_str.len() - 1];
+    let number: u64 = number_str.parse().ok()?;
+
+    match unit {
+        's' => Some(Duration::from_secs(number)),
+        'm' => Some(Duration::from_secs(number * 60)),
+        'h' => Some(Duration::from_secs(number * 3600)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 #[path = "rollout_test.rs"]
 mod tests;
