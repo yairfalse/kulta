@@ -765,6 +765,43 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
                     rollout = ?name,
                     "Status updated successfully"
                 );
+
+                // If promotion annotation was used, remove it to prevent repeated promotions
+                if has_promote_annotation(&rollout) {
+                    info!(
+                        rollout = ?name,
+                        "Removing promote annotation after successful promotion"
+                    );
+
+                    // Create patch to remove the annotation
+                    let remove_annotation_patch = serde_json::json!({
+                        "metadata": {
+                            "annotations": {
+                                "kulta.io/promote": serde_json::Value::Null
+                            }
+                        }
+                    });
+
+                    match rollout_api
+                        .patch(&name, &PatchParams::default(), &Patch::Merge(&remove_annotation_patch))
+                        .await
+                    {
+                        Ok(_) => {
+                            info!(
+                                rollout = ?name,
+                                "Promote annotation removed successfully"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = ?e,
+                                rollout = ?name,
+                                "Failed to remove promote annotation (non-fatal)"
+                            );
+                            // Don't fail reconciliation if annotation removal fails
+                        }
+                    }
+                }
             }
             Err(e) => {
                 error!(
