@@ -312,12 +312,21 @@ pub fn initialize_rollout_status(rollout: &Rollout) -> crate::crd::rollout::Roll
         }
     };
 
+    // Get first step
+    let first_step = canary_strategy.steps.first();
+
     // Get weight from first step (step 0)
-    let first_step_weight = canary_strategy
-        .steps
-        .first()
+    let first_step_weight = first_step
         .and_then(|step| step.set_weight)
         .unwrap_or(0);
+
+    // Check if first step has pause - set pause start time
+    let pause_start_time = if first_step.is_some() && first_step.unwrap().pause.is_some() {
+        // Set pause start time to now (RFC3339)
+        Some(Utc::now().to_rfc3339())
+    } else {
+        None
+    };
 
     RolloutStatus {
         current_step_index: Some(0),
@@ -327,6 +336,7 @@ pub fn initialize_rollout_status(rollout: &Rollout) -> crate::crd::rollout::Roll
             "Starting canary rollout at step 0 ({}% traffic)",
             first_step_weight
         )),
+        pause_start_time,
         ..Default::default()
     }
 }

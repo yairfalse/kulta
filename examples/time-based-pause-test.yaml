@@ -1,0 +1,98 @@
+---
+# Test: Time-based pause (10s duration)
+# Expected: Rollout should progress from 20% → 50% → 100% automatically
+# Timeline:
+#   - t=0s: Step 0 (20%), pauseStartTime set
+#   - t=0-10s: Still at step 0 (paused)
+#   - t=10s+: Progress to step 1 (50%), pauseStartTime set
+#   - t=10-20s: Still at step 1 (paused)
+#   - t=20s+: Progress to step 2 (100%), completed
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: time-pause-test
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-stable
+  namespace: time-pause-test
+spec:
+  selector:
+    app: nginx
+    rollouts.kulta.io/type: stable
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-canary
+  namespace: time-pause-test
+spec:
+  selector:
+    app: nginx
+    rollouts.kulta.io/type: canary
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: nginx-route
+  namespace: time-pause-test
+spec:
+  parentRefs:
+  - name: test-gateway
+    kind: Gateway
+  rules:
+  - backendRefs:
+    - name: nginx-stable
+      port: 80
+      weight: 100
+    - name: nginx-canary
+      port: 80
+      weight: 0
+
+---
+apiVersion: kulta.io/v1alpha1
+kind: Rollout
+metadata:
+  name: nginx-time-pause
+  namespace: time-pause-test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+  strategy:
+    canary:
+      stableService: nginx-stable
+      canaryService: nginx-canary
+      trafficRouting:
+        gatewayAPI:
+          httpRoute: nginx-route
+      steps:
+      - setWeight: 20
+        pause:
+          duration: "10s"  # 10 second pause
+      - setWeight: 50
+        pause:
+          duration: "10s"  # 10 second pause
+      - setWeight: 100
