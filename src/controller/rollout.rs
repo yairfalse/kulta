@@ -814,8 +814,8 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
         }
     }
 
-    // Requeue after 5 minutes
-    Ok(Action::requeue(Duration::from_secs(300)))
+    // Requeue after 30 seconds for faster pause progression checks
+    Ok(Action::requeue(Duration::from_secs(30)))
 }
 
 /// Parse a duration string like "5m", "30s", "1h" into std::time::Duration
