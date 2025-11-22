@@ -1,3 +1,6 @@
+#![allow(clippy::unwrap_used)] // Tests can use unwrap for brevity
+#![allow(clippy::expect_used)] // Tests can use expect for better error messages
+
 use super::*;
 use kube::CustomResourceExt;
 

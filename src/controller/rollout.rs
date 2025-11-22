@@ -1,6 +1,7 @@
-use crate::crd::rollout::Rollout;
+use crate::crd::rollout::{Phase, Rollout};
 use chrono::{DateTime, Utc};
-use futures::FutureExt;
+#[cfg(test)]
+use futures::FutureExt; // Only used in test helper new_mock()
 use k8s_openapi::api::apps::v1::{ReplicaSet, ReplicaSetSpec};
 use k8s_openapi::api::core::v1::PodTemplateSpec;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
@@ -26,6 +27,12 @@ pub enum ReconcileError {
 
     #[error("Rollout missing name")]
     MissingName,
+
+    #[error("ReplicaSet missing name in metadata")]
+    ReplicaSetMissingName,
+
+    #[error("Failed to serialize PodTemplateSpec: {0}")]
+    SerializationError(String),
 }
 
 pub struct Context {
@@ -37,6 +44,8 @@ impl Context {
         Context { client }
     }
 
+    #[cfg(test)]
+    #[allow(clippy::unwrap_used)] // Test helper - panicking is acceptable
     pub fn new_mock() -> Self {
         // For testing, create a mock client
         // In real tests, we'd use a fake API server
@@ -58,9 +67,13 @@ impl Context {
 /// - Serialize the template to JSON (deterministic)
 /// - Hash the JSON bytes
 /// - Return 10-character hex string
-pub fn compute_pod_template_hash(template: &PodTemplateSpec) -> String {
+///
+/// # Errors
+/// Returns SerializationError if PodTemplateSpec cannot be serialized to JSON
+pub fn compute_pod_template_hash(template: &PodTemplateSpec) -> Result<String, ReconcileError> {
     // Serialize template to JSON for stable hashing
-    let json = serde_json::to_string(template).expect("Failed to serialize PodTemplateSpec");
+    let json = serde_json::to_string(template)
+        .map_err(|e| ReconcileError::SerializationError(e.to_string()))?;
 
     // Hash the JSON string
     let mut hasher = DefaultHasher::new();
@@ -68,7 +81,7 @@ pub fn compute_pod_template_hash(template: &PodTemplateSpec) -> String {
     let hash = hasher.finish();
 
     // Return 10-character hex string (like Kubernetes)
-    format!("{:x}", hash)[..10].to_string()
+    Ok(format!("{:x}", hash)[..10].to_string())
 }
 
 /// Ensure a ReplicaSet exists (create if missing)
@@ -83,7 +96,11 @@ async fn ensure_replicaset_exists(
     rs_type: &str,
     replicas: i32,
 ) -> Result<(), ReconcileError> {
-    let rs_name = rs.metadata.name.as_ref().unwrap();
+    let rs_name = rs
+        .metadata
+        .name
+        .as_ref()
+        .ok_or(ReconcileError::ReplicaSetMissingName)?;
 
     match rs_api.get(rs_name).await {
         Ok(_existing) => {
@@ -312,21 +329,33 @@ pub fn initialize_rollout_status(rollout: &Rollout) -> crate::crd::rollout::Roll
         }
     };
 
+    // Get first step
+    let first_step = canary_strategy.steps.first();
+
     // Get weight from first step (step 0)
-    let first_step_weight = canary_strategy
-        .steps
-        .first()
-        .and_then(|step| step.set_weight)
-        .unwrap_or(0);
+    let first_step_weight = first_step.and_then(|step| step.set_weight).unwrap_or(0);
+
+    // Check if first step has pause - set pause start time
+    let pause_start_time = if let Some(step) = first_step {
+        if step.pause.is_some() {
+            // Set pause start time to now (RFC3339)
+            Some(Utc::now().to_rfc3339())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     RolloutStatus {
         current_step_index: Some(0),
         current_weight: Some(first_step_weight),
-        phase: Some("Progressing".to_string()),
+        phase: Some(Phase::Progressing),
         message: Some(format!(
             "Starting canary rollout at step 0 ({}% traffic)",
             first_step_weight
         )),
+        pause_start_time,
         ..Default::default()
     }
 }
@@ -350,7 +379,7 @@ pub fn should_progress_to_next_step(rollout: &Rollout) -> bool {
     };
 
     // If phase is Paused, don't progress
-    if status.phase.as_deref() == Some("Paused") {
+    if status.phase == Some(Phase::Paused) {
         return false;
     }
 
@@ -433,7 +462,8 @@ pub fn compute_desired_status(rollout: &Rollout) -> crate::crd::rollout::Rollout
     }
 
     // Otherwise, return current status (no change)
-    rollout.status.as_ref().unwrap().clone()
+    // This should always exist since we checked is_none() above, but use unwrap_or_default for safety
+    rollout.status.as_ref().cloned().unwrap_or_default()
 }
 
 /// Advance rollout to next step
@@ -479,7 +509,7 @@ pub fn advance_to_next_step(rollout: &Rollout) -> crate::crd::rollout::RolloutSt
         return RolloutStatus {
             current_step_index: Some(next_step_index),
             current_weight: Some(100),
-            phase: Some("Completed".to_string()),
+            phase: Some(Phase::Completed),
             message: Some("Rollout completed: 100% traffic to canary".to_string()),
             ..current_status.clone()
         };
@@ -492,12 +522,12 @@ pub fn advance_to_next_step(rollout: &Rollout) -> crate::crd::rollout::RolloutSt
     // Check if this is the final step (100% canary)
     let (phase, message) = if next_weight == 100 {
         (
-            "Completed".to_string(),
+            Phase::Completed,
             "Rollout completed: 100% traffic to canary".to_string(),
         )
     } else {
         (
-            "Progressing".to_string(),
+            Phase::Progressing,
             format!(
                 "Advanced to step {} ({}% traffic)",
                 next_step_index, next_weight
@@ -533,16 +563,23 @@ pub fn advance_to_next_step(rollout: &Rollout) -> crate::crd::rollout::RolloutSt
 ///
 /// The `rollouts.kulta.io/managed=true` label prevents Kubernetes Deployment
 /// controllers from adopting KULTA-managed ReplicaSets.
-pub fn build_replicaset(rollout: &Rollout, rs_type: &str, replicas: i32) -> ReplicaSet {
+///
+/// # Errors
+/// Returns error if Rollout is missing name or if PodTemplateSpec cannot be serialized
+pub fn build_replicaset(
+    rollout: &Rollout,
+    rs_type: &str,
+    replicas: i32,
+) -> Result<ReplicaSet, ReconcileError> {
     let rollout_name = rollout
         .metadata
         .name
         .as_ref()
-        .expect("Rollout must have name");
+        .ok_or(ReconcileError::MissingName)?;
     let namespace = rollout.metadata.namespace.clone();
 
     // Compute pod template hash
-    let pod_template_hash = compute_pod_template_hash(&rollout.spec.template);
+    let pod_template_hash = compute_pod_template_hash(&rollout.spec.template)?;
 
     // Clone the pod template and add labels
     let mut template = rollout.spec.template.clone();
@@ -568,7 +605,7 @@ pub fn build_replicaset(rollout: &Rollout, rs_type: &str, replicas: i32) -> Repl
     };
 
     // Build ReplicaSet
-    ReplicaSet {
+    Ok(ReplicaSet {
         metadata: ObjectMeta {
             name: Some(format!("{}-{}", rollout_name, rs_type)),
             namespace,
@@ -582,7 +619,7 @@ pub fn build_replicaset(rollout: &Rollout, rs_type: &str, replicas: i32) -> Repl
             ..Default::default()
         }),
         status: None,
-    }
+    })
 }
 
 /// Reconcile a Rollout resource
@@ -621,7 +658,7 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
     );
 
     // Build and ensure stable ReplicaSet exists
-    let stable_rs = build_replicaset(&rollout, "stable", rollout.spec.replicas);
+    let stable_rs = build_replicaset(&rollout, "stable", rollout.spec.replicas)?;
     info!(
         rollout = ?name,
         rs_type = "stable",
@@ -631,7 +668,7 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
     ensure_replicaset_exists(&rs_api, &stable_rs, "stable", rollout.spec.replicas).await?;
 
     // Build and ensure canary ReplicaSet exists (0 replicas initially)
-    let canary_rs = build_replicaset(&rollout, "canary", 0);
+    let canary_rs = build_replicaset(&rollout, "canary", 0)?;
     info!(
         rollout = ?name,
         rs_type = "canary",
@@ -723,8 +760,22 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
         }
     }
 
+    // Check if promote annotation exists BEFORE computing status (to avoid race condition)
+    let had_promote_annotation = has_promote_annotation(&rollout);
+    let was_paused_before = rollout
+        .status
+        .as_ref()
+        .map(|s| s.phase == Some(Phase::Paused))
+        .unwrap_or(false);
+
     // Compute desired status (initialize or progress steps)
     let desired_status = compute_desired_status(&rollout);
+
+    // Determine if we actually progressed due to the annotation
+    // Only remove annotation if: had annotation AND was paused AND now progressing
+    let progressed_due_to_annotation = had_promote_annotation
+        && was_paused_before
+        && rollout.status.as_ref() != Some(&desired_status);
 
     // Update Rollout status in Kubernetes if it changed
     if rollout.status.as_ref() != Some(&desired_status) {
@@ -755,6 +806,47 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
                     rollout = ?name,
                     "Status updated successfully"
                 );
+
+                // Remove promote annotation only if it was actually used for progression
+                if progressed_due_to_annotation {
+                    info!(
+                        rollout = ?name,
+                        "Removing promote annotation after successful promotion"
+                    );
+
+                    // Create patch to remove the annotation
+                    let remove_annotation_patch = serde_json::json!({
+                        "metadata": {
+                            "annotations": {
+                                "kulta.io/promote": serde_json::Value::Null
+                            }
+                        }
+                    });
+
+                    match rollout_api
+                        .patch(
+                            &name,
+                            &PatchParams::default(),
+                            &Patch::Merge(&remove_annotation_patch),
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            info!(
+                                rollout = ?name,
+                                "Promote annotation removed successfully"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = ?e,
+                                rollout = ?name,
+                                "Failed to remove promote annotation (non-fatal)"
+                            );
+                            // Don't fail reconciliation if annotation removal fails
+                        }
+                    }
+                }
             }
             Err(e) => {
                 error!(
@@ -767,8 +859,8 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
         }
     }
 
-    // Requeue after 5 minutes
-    Ok(Action::requeue(Duration::from_secs(300)))
+    // Requeue after 30 seconds for faster pause progression checks
+    Ok(Action::requeue(Duration::from_secs(30)))
 }
 
 /// Parse a duration string like "5m", "30s", "1h" into std::time::Duration
@@ -827,5 +919,6 @@ fn has_promote_annotation(rollout: &Rollout) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)] // Tests can use unwrap/expect for brevity
 #[path = "rollout_test.rs"]
 mod tests;
