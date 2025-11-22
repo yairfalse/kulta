@@ -1,6 +1,6 @@
 use super::*;
 use crate::crd::rollout::{
-    CanaryStep, CanaryStrategy, GatewayAPIRouting, Rollout, RolloutSpec, RolloutStatus,
+    CanaryStep, CanaryStrategy, GatewayAPIRouting, Phase, Rollout, RolloutSpec, RolloutStatus,
     RolloutStrategy, TrafficRouting,
 };
 use kube::api::ObjectMeta;
@@ -45,7 +45,7 @@ fn create_test_rollout_with_canary() -> Rollout {
                 canary: Some(CanaryStrategy {
                     canary_service: "test-app-canary".to_string(),
                     stable_service: "test-app-stable".to_string(),
-                    steps: vec![],  // Tests will set their own steps
+                    steps: vec![], // Tests will set their own steps
                     traffic_routing: None,
                 }),
             },
@@ -114,7 +114,7 @@ async fn test_reconcile_creates_stable_replicaset() {
 
     // Test that build_replicaset creates a stable ReplicaSet with correct properties
     // (Full reconcile integration test requires real K8s cluster - see CI integration tests)
-    let stable_rs = build_replicaset(&rollout, "stable", rollout.spec.replicas);
+    let stable_rs = build_replicaset(&rollout, "stable", rollout.spec.replicas).unwrap();
 
     // Verify stable ReplicaSet has correct properties
     assert_eq!(
@@ -154,8 +154,8 @@ async fn test_compute_pod_template_hash() {
         }),
     };
 
-    let hash1 = compute_pod_template_hash(&pod_template);
-    let hash2 = compute_pod_template_hash(&pod_template);
+    let hash1 = compute_pod_template_hash(&pod_template).unwrap();
+    let hash2 = compute_pod_template_hash(&pod_template).unwrap();
 
     // Same template should produce same hash
     assert_eq!(hash1, hash2);
@@ -167,7 +167,7 @@ async fn test_compute_pod_template_hash() {
         spec.containers[0].image = Some("nginx:2.0".to_string());
     }
 
-    let hash3 = compute_pod_template_hash(&different_template);
+    let hash3 = compute_pod_template_hash(&different_template).unwrap();
     assert_ne!(hash1, hash3);
 }
 
@@ -221,7 +221,7 @@ async fn test_build_replicaset_spec() {
     };
 
     // Build stable ReplicaSet
-    let rs = build_replicaset(&rollout, "stable", 3);
+    let rs = build_replicaset(&rollout, "stable", 3).unwrap();
 
     assert_eq!(rs.metadata.name.as_deref(), Some("test-rollout-stable"));
     assert_eq!(rs.metadata.namespace.as_deref(), Some("default"));
@@ -301,7 +301,7 @@ async fn test_reconcile_creates_canary_replicaset() {
     };
 
     // Build canary ReplicaSet (should have 0 replicas initially)
-    let canary_rs = build_replicaset(&rollout, "canary", 0);
+    let canary_rs = build_replicaset(&rollout, "canary", 0).unwrap();
 
     // Verify canary ReplicaSet has correct properties
     assert_eq!(
@@ -386,7 +386,7 @@ async fn test_replicaset_has_kulta_managed_label() {
         status: None,
     };
 
-    let stable_rs = build_replicaset(&rollout, "stable", 3);
+    let stable_rs = build_replicaset(&rollout, "stable", 3).unwrap();
 
     // Verify ReplicaSet metadata has rollouts.kulta.io/managed label
     let rs_labels = stable_rs.metadata.labels.as_ref().unwrap();
@@ -432,7 +432,7 @@ async fn test_replicaset_has_kulta_managed_label() {
     );
 
     // Verify canary also has the label
-    let canary_rs = build_replicaset(&rollout, "canary", 0);
+    let canary_rs = build_replicaset(&rollout, "canary", 0).unwrap();
     let canary_selector_labels = canary_rs
         .spec
         .as_ref()
@@ -499,8 +499,8 @@ async fn test_build_both_stable_and_canary_replicasets() {
     };
 
     // Build both ReplicaSets
-    let stable_rs = build_replicaset(&rollout, "stable", rollout.spec.replicas);
-    let canary_rs = build_replicaset(&rollout, "canary", 0);
+    let stable_rs = build_replicaset(&rollout, "stable", rollout.spec.replicas).unwrap();
+    let canary_rs = build_replicaset(&rollout, "canary", 0).unwrap();
 
     // Verify stable ReplicaSet
     assert_eq!(
@@ -932,95 +932,6 @@ async fn test_gateway_api_backend_refs_no_canary_strategy() {
     assert_eq!(gateway_backend_refs.len(), 0);
 }
 
-/*
- * TODO: Re-enable when gateway-api crate matches our k8s-openapi version
- * Currently blocked by: gateway-api 0.10 uses k8s-openapi 0.21, but we use 0.23
- * This test will be replaced by integration tests once we have a kind cluster setup
- *
-#[tokio::test]
-async fn test_update_httproute_with_weighted_backends() {
-    // Test that we can update an HTTPRoute's backend refs with weighted backends
-    use gateway_api::apis::standard::httproutes::{HTTPRoute, HTTPRouteSpec, HTTPRouteRules};
-
-    // Create a Rollout at step 0 (20% canary)
-    let rollout = Rollout {
-        metadata: ObjectMeta {
-            name: Some("test-rollout".to_string()),
-            namespace: Some("default".to_string()),
-            ..Default::default()
-        },
-        spec: RolloutSpec {
-            replicas: 3,
-            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector::default(),
-            template: k8s_openapi::api::core::v1::PodTemplateSpec::default(),
-            strategy: RolloutStrategy {
-                canary: Some(CanaryStrategy {
-                    canary_service: "test-app-canary".to_string(),
-                    stable_service: "test-app-stable".to_string(),
-                    steps: vec![CanaryStep {
-                        set_weight: Some(20),
-                        pause: None,
-                    }],
-                    traffic_routing: Some(TrafficRouting {
-                        gateway_api: Some(GatewayAPIRouting {
-                            http_route: "test-route".to_string(),
-                        }),
-                    }),
-                }),
-            },
-        },
-        status: Some(RolloutStatus {
-            current_step_index: Some(0), // 20% canary
-            ..Default::default()
-        }),
-    };
-
-    // Create a mock HTTPRoute (what exists in K8s)
-    let mut httproute = HTTPRoute {
-        metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
-            name: Some("test-route".to_string()),
-            namespace: Some("default".to_string()),
-            ..Default::default()
-        },
-        spec: HTTPRouteSpec {
-            rules: Some(vec![HTTPRouteRules {
-                backend_refs: None, // Currently no backends
-                ..Default::default()
-            }]),
-            ..Default::default()
-        },
-        status: None,
-    };
-
-    // Update the HTTPRoute with weighted backends from rollout
-    update_httproute_backends(&rollout, &mut httproute);
-
-    // Verify the HTTPRoute now has weighted backend refs
-    let rules = httproute.spec.rules.as_ref().expect("Should have rules");
-    assert_eq!(rules.len(), 1);
-
-    let backend_refs = rules[0]
-        .backend_refs
-        .as_ref()
-        .expect("Should have backend_refs");
-    assert_eq!(backend_refs.len(), 2);
-
-    // Verify stable backend (80%)
-    let stable = backend_refs
-        .iter()
-        .find(|b| b.name == "test-app-stable")
-        .expect("Should have stable backend");
-    assert_eq!(stable.weight, Some(80));
-
-    // Verify canary backend (20%)
-    let canary = backend_refs
-        .iter()
-        .find(|b| b.name == "test-app-canary")
-        .expect("Should have canary backend");
-    assert_eq!(canary.weight, Some(20));
-}
-*/
-
 // TDD Cycle 16: Automatic Step Progression
 // RED: Test that reconcile progresses through canary steps automatically
 
@@ -1066,7 +977,7 @@ async fn test_initialize_rollout_status() {
     let status = initialize_rollout_status(&rollout);
 
     assert_eq!(status.current_step_index, Some(0));
-    assert_eq!(status.phase, Some("Progressing".to_string()));
+    assert_eq!(status.phase, Some(Phase::Progressing));
     assert_eq!(status.current_weight, Some(20));
     assert_eq!(
         status.message,
@@ -1108,7 +1019,7 @@ async fn test_should_progress_to_next_step() {
         },
         status: Some(RolloutStatus {
             current_step_index: Some(0),
-            phase: Some("Progressing".to_string()),
+            phase: Some(Phase::Progressing),
             ..Default::default()
         }),
     };
@@ -1157,7 +1068,7 @@ async fn test_should_not_progress_when_paused() {
         },
         status: Some(RolloutStatus {
             current_step_index: Some(0),
-            phase: Some("Paused".to_string()), // Currently paused
+            phase: Some(Phase::Paused), // Currently paused
             ..Default::default()
         }),
     };
@@ -1201,7 +1112,7 @@ async fn test_advance_to_next_step() {
         status: Some(RolloutStatus {
             current_step_index: Some(0),
             current_weight: Some(20),
-            phase: Some("Progressing".to_string()),
+            phase: Some(Phase::Progressing),
             ..Default::default()
         }),
     };
@@ -1215,7 +1126,7 @@ async fn test_advance_to_next_step() {
 
     assert_eq!(new_status.current_step_index, Some(1));
     assert_eq!(new_status.current_weight, Some(50));
-    assert_eq!(new_status.phase, Some("Progressing".to_string()));
+    assert_eq!(new_status.phase, Some(Phase::Progressing));
     assert_eq!(
         new_status.message,
         Some("Advanced to step 1 (50% traffic)".to_string())
@@ -1256,7 +1167,7 @@ async fn test_advance_to_final_step() {
         status: Some(RolloutStatus {
             current_step_index: Some(0),
             current_weight: Some(20),
-            phase: Some("Progressing".to_string()),
+            phase: Some(Phase::Progressing),
             ..Default::default()
         }),
     };
@@ -1268,7 +1179,7 @@ async fn test_advance_to_final_step() {
     assert_eq!(new_status.current_weight, Some(100));
 
     // When reaching final step (100% canary), phase should be "Completed"
-    assert_eq!(new_status.phase, Some("Completed".to_string()));
+    assert_eq!(new_status.phase, Some(Phase::Completed));
     assert_eq!(
         new_status.message,
         Some("Rollout completed: 100% traffic to canary".to_string())
@@ -1319,7 +1230,7 @@ async fn test_compute_desired_status_for_new_rollout() {
     // Should initialize to step 0
     assert_eq!(desired_status.current_step_index, Some(0));
     assert_eq!(desired_status.current_weight, Some(20));
-    assert_eq!(desired_status.phase, Some("Progressing".to_string()));
+    assert_eq!(desired_status.phase, Some(Phase::Progressing));
 }
 
 #[tokio::test]
@@ -1356,7 +1267,7 @@ async fn test_compute_desired_status_progresses_step() {
         status: Some(RolloutStatus {
             current_step_index: Some(0),
             current_weight: Some(20),
-            phase: Some("Progressing".to_string()),
+            phase: Some(Phase::Progressing),
             ..Default::default()
         }),
     };
@@ -1366,7 +1277,7 @@ async fn test_compute_desired_status_progresses_step() {
 
     assert_eq!(desired_status.current_step_index, Some(1));
     assert_eq!(desired_status.current_weight, Some(50));
-    assert_eq!(desired_status.phase, Some("Progressing".to_string()));
+    assert_eq!(desired_status.phase, Some(Phase::Progressing));
 }
 
 #[tokio::test]
@@ -1405,7 +1316,7 @@ async fn test_compute_desired_status_respects_pause() {
         status: Some(RolloutStatus {
             current_step_index: Some(0),
             current_weight: Some(20),
-            phase: Some("Paused".to_string()),
+            phase: Some(Phase::Paused),
             ..Default::default()
         }),
     };
@@ -1416,7 +1327,7 @@ async fn test_compute_desired_status_respects_pause() {
     // Should stay at step 0
     assert_eq!(desired_status.current_step_index, Some(0));
     assert_eq!(desired_status.current_weight, Some(20));
-    assert_eq!(desired_status.phase, Some("Paused".to_string()));
+    assert_eq!(desired_status.phase, Some(Phase::Paused));
 }
 
 // TDD Cycle 18: Pause Duration Parsing
@@ -1494,7 +1405,7 @@ fn test_should_progress_when_pause_duration_elapsed() {
     rollout.status = Some(RolloutStatus {
         current_step_index: Some(0),
         current_weight: Some(20),
-        phase: Some("Progressing".to_string()),
+        phase: Some(Phase::Progressing),
         message: Some("At step 0".to_string()),
         pause_start_time: Some(pause_start.to_rfc3339()),
         ..Default::default()
@@ -1536,7 +1447,7 @@ fn test_should_not_progress_when_pause_duration_not_elapsed() {
     rollout.status = Some(RolloutStatus {
         current_step_index: Some(0),
         current_weight: Some(20),
-        phase: Some("Progressing".to_string()),
+        phase: Some(Phase::Progressing),
         message: Some("At step 0".to_string()),
         pause_start_time: Some(pause_start.to_rfc3339()),
         ..Default::default()
@@ -1576,7 +1487,7 @@ fn test_advance_sets_pause_start_time() {
     rollout.status = Some(RolloutStatus {
         current_step_index: Some(-1),
         current_weight: Some(0),
-        phase: Some("Initializing".to_string()),
+        phase: Some(Phase::Initializing),
         message: Some("Starting".to_string()),
         pause_start_time: None,
         ..Default::default()
@@ -1627,7 +1538,7 @@ fn test_advance_clears_pause_start_time_when_no_pause() {
     rollout.status = Some(RolloutStatus {
         current_step_index: Some(0),
         current_weight: Some(20),
-        phase: Some("Progressing".to_string()),
+        phase: Some(Phase::Progressing),
         message: Some("At step 0".to_string()),
         pause_start_time: Some("2025-01-01T00:00:00Z".to_string()),
         ..Default::default()
@@ -1684,7 +1595,7 @@ fn test_has_promote_annotation() {
     rollout.status = Some(RolloutStatus {
         current_step_index: Some(0),
         current_weight: Some(20),
-        phase: Some("Progressing".to_string()),
+        phase: Some(Phase::Progressing),
         message: Some("At step 0".to_string()),
         pause_start_time: Some("2025-01-01T00:00:00Z".to_string()),
         ..Default::default()
@@ -1723,7 +1634,7 @@ fn test_should_progress_when_promoted() {
     rollout.status = Some(RolloutStatus {
         current_step_index: Some(0),
         current_weight: Some(20),
-        phase: Some("Progressing".to_string()),
+        phase: Some(Phase::Progressing),
         message: Some("At step 0".to_string()),
         pause_start_time: Some("2025-01-01T00:00:00Z".to_string()),
         ..Default::default()

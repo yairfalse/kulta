@@ -30,9 +30,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting KULTA progressive delivery controller");
 
     // Create Kubernetes client
-    let client = Client::try_default()
-        .await
-        .expect("Failed to create Kubernetes client");
+    let client = Client::try_default().await?;
 
     info!("Connected to Kubernetes cluster");
 

@@ -118,6 +118,24 @@ pub struct GatewayAPIRouting {
     pub http_route: String,
 }
 
+/// Phase of a Rollout
+///
+/// Represents the current lifecycle stage of the rollout
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq, JsonSchema)]
+pub enum Phase {
+    /// Initial phase when rollout is being set up
+    #[default]
+    Initializing,
+    /// Rollout is actively progressing through canary steps
+    Progressing,
+    /// Rollout is paused waiting for manual promotion or duration
+    Paused,
+    /// Rollout successfully completed (100% canary)
+    Completed,
+    /// Rollout failed and requires manual intervention
+    Failed,
+}
+
 /// Status of the Rollout
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, JsonSchema)]
 pub struct RolloutStatus {
@@ -143,7 +161,7 @@ pub struct RolloutStatus {
 
     /// Phase of the rollout (Initializing, Progressing, Paused, Completed, Failed)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub phase: Option<String>,
+    pub phase: Option<Phase>,
 
     /// Human-readable message
     #[serde(skip_serializing_if = "Option::is_none")]
