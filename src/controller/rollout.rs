@@ -34,8 +34,6 @@ pub enum ReconcileError {
     #[error("Failed to serialize PodTemplateSpec: {0}")]
     SerializationError(String),
 
-    #[error("Rollout missing status when expected")]
-    MissingStatus,
 }
 
 pub struct Context {
