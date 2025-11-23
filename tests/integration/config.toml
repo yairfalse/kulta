@@ -1,0 +1,42 @@
+# KULTA Integration Test Configuration
+
+[cluster]
+name = "kulta-test"
+reuse = true          # Reuse existing cluster if present
+cleanup = false       # Keep cluster for debugging
+
+[scenarios]
+# Progressive deployment scenarios
+canary_rollout = true
+blue_green_swap = false
+traffic_splitting = true
+rollback_on_error = false
+progressive_headers = false
+load_testing = false
+
+[timeouts]
+gateway_ready = 60
+route_ready = 30
+deployment_ready = 120  # Progressive deploys take longer
+reconciliation = 10
+
+[performance]
+tool = "wrk"
+duration_seconds = 30
+connections = 100
+threads = 4
+target_rps = 1000
+
+[sniffer]
+enabled = false
+interface = "eth0"
+filter = "tcp port 80 or tcp port 443"
+output_dir = "/tmp/kulta-captures"
+
+[deployment]
+# Test app settings
+stable_image = "nginx:1.21"
+canary_image = "nginx:1.22"
+replicas = 3
+canary_steps = [10, 25, 50, 75, 100]  # Traffic weights for progressive rollout
+step_duration_secs = 10  # How long to wait at each step

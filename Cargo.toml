@@ -5,12 +5,12 @@ edition = "2021"
 
 [dependencies]
 # Kubernetes client and controller runtime
-kube = { version = "0.95", features = ["runtime", "derive"] }
-k8s-openapi = { version = "0.23", features = ["v1_31"] }
+kube = { version = "2.0", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.26", features = ["v1_30"] }
 
 # Gateway API types
-# NOTE: Using 0.10 to avoid k8s-openapi version conflicts
-gateway-api = "0.10"
+# NOTE: Updated to 0.19 for compatibility with kube 2.0 + k8s-openapi 0.26
+gateway-api = "0.19"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -19,7 +19,7 @@ futures = "0.3"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-schemars = "0.8"
+schemars = "1.0"
 
 # Logging
 tracing = "0.1"
@@ -32,5 +32,15 @@ thiserror = "1"
 # Date/time for RFC3339 parsing
 chrono = { version = "0.4", features = ["serde"] }
 
+# CDEvents observability
+cdevents-sdk = { path = "../sdk-rust/cdevents-sdk", features = ["cloudevents"] }
+cloudevents-sdk = { version = "0.8", default-features = false }
+uuid = { version = "1", features = ["v4"] }
+
 [dev-dependencies]
 serde_yaml = "0.9"
+
+# Integration test dependencies
+async-trait = "0.1"
+reqwest = "0.12"
+toml = "0.8"

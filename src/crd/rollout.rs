@@ -25,11 +25,9 @@ pub struct RolloutSpec {
     pub replicas: i32,
 
     /// Label selector for pods
-    #[schemars(schema_with = "any_object")]
     pub selector: LabelSelector,
 
     /// Template describes the pods that will be created
-    #[schemars(schema_with = "any_object")]
     pub template: PodTemplateSpec,
 
     /// Deployment strategy (currently only canary)
@@ -38,25 +36,6 @@ pub struct RolloutSpec {
 
 fn default_replicas() -> i32 {
     1
-}
-
-fn any_object(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-    use schemars::schema::*;
-    use serde_json::json;
-
-    SchemaObject {
-        instance_type: Some(InstanceType::Object.into()),
-        extensions: {
-            let mut ext = std::collections::BTreeMap::new();
-            ext.insert(
-                "x-kubernetes-preserve-unknown-fields".to_string(),
-                json!(true),
-            );
-            ext
-        },
-        ..Default::default()
-    }
-    .into()
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
