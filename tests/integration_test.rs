@@ -11,6 +11,14 @@ use integration::{TestConfig, TestContext, TestScenario};
 
 #[tokio::test]
 async fn run_integration_tests() {
+    // Skip integration tests in CI if no cluster is available
+    if std::env::var("CI").is_ok() && std::env::var("KULTA_RUN_INTEGRATION_TESTS").is_err() {
+        println!(
+            "⏭️  Skipping integration tests in CI (set KULTA_RUN_INTEGRATION_TESTS=1 to enable)"
+        );
+        return;
+    }
+
     // Load configuration
     let config = TestConfig::load().expect("Failed to load test config");
 
