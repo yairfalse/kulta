@@ -149,6 +149,78 @@ async fn test_emit_service_upgraded_on_step_progression() {
     // TODO: Verify artifact_id, environment, step metadata
 }
 
+// TDD Cycle 3: RED - Test that service.rolledback event is emitted on failure
+#[tokio::test]
+async fn test_emit_service_rolledback_on_failure() {
+    // ARRANGE: Create test rollout
+    let rollout = Rollout {
+        metadata: ObjectMeta {
+            name: Some("test-app".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: Default::default(),
+            template: create_test_pod_template("nginx:2.0"),
+            strategy: RolloutStrategy {
+                canary: Some(CanaryStrategy {
+                    canary_service: "test-app-canary".to_string(),
+                    stable_service: "test-app-stable".to_string(),
+                    steps: vec![CanaryStep {
+                        set_weight: Some(50),
+                        pause: None,
+                    }],
+                    traffic_routing: None,
+                }),
+            },
+        },
+        status: None,
+    };
+
+    // Create mock CDEvents sink
+    let sink = CDEventsSink::new_mock();
+
+    // Old status (Progressing at step 0, weight 50%)
+    let old_status = Some(RolloutStatus {
+        phase: Some(Phase::Progressing),
+        current_step_index: Some(0),
+        current_weight: Some(50),
+        ..Default::default()
+    });
+
+    // New status (Failed - rollback triggered)
+    let new_status = RolloutStatus {
+        phase: Some(Phase::Failed),
+        current_step_index: Some(0),
+        current_weight: Some(0),
+        ..Default::default()
+    };
+
+    // ACT: Emit CDEvent for status change
+    emit_status_change_event(&rollout, &old_status, &new_status, &sink)
+        .await
+        .unwrap();
+
+    // ASSERT: Verify service.rolledback event was emitted
+    let events = sink.get_emitted_events();
+    assert_eq!(events.len(), 1, "Expected exactly 1 event");
+
+    let event = &events[0];
+
+    // Use AttributesReader trait to access event.ty()
+    use cloudevents::AttributesReader;
+    assert_eq!(
+        event.ty(),
+        "dev.cdevents.service.rolledback.0.2.0",
+        "Expected service.rolledback event"
+    );
+
+    // TODO: Verify event can be converted to CDEvent
+    // let _cdevent: cdevents_sdk::CDEvent = event.clone().try_into().unwrap();
+    // TODO: Verify artifact_id, environment, failure reason
+}
+
 // Helper to create test pod template
 fn create_test_pod_template(image: &str) -> k8s_openapi::api::core::v1::PodTemplateSpec {
     use k8s_openapi::api::core::v1::{Container, PodSpec, PodTemplateSpec};
