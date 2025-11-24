@@ -57,7 +57,7 @@ impl MetricsCollector {
             self.baseline = Some(current.clone());
             Ok(())
         } else {
-            Err("No current snapshot to set as baseline".into())
+            Err("no current snapshot to set as baseline".into())
         }
     }
 
