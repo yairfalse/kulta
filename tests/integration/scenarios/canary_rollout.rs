@@ -283,7 +283,7 @@ async fn create_httproute(ctx: &TestContext) -> TestResult {
             parent_refs: None, // No actual gateway in test
             rules: Some(vec![
                 gateway_api::apis::standard::httproutes::HTTPRouteRules {
-                    name: None, // Optional rule name
+                    name: Some("default".to_string()), // Required rule name for gateway-api 0.19
                     backend_refs: Some(vec![
                         HTTPRouteRulesBackendRefs {
                             name: "app-stable".to_string(),
