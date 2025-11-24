@@ -100,7 +100,7 @@ pub async fn wait_for_httproute(
 
     loop {
         if start.elapsed().as_secs() > timeout_secs {
-            return Err(format!("Timeout waiting for HTTPRoute: {}", name).into());
+            return Err(format!("timeout waiting for HTTPRoute: {}", name).into());
         }
 
         match routes.get(name).await {
