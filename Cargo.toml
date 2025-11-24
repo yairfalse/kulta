@@ -32,10 +32,10 @@ thiserror = "1"
 # Date/time for RFC3339 parsing
 chrono = { version = "0.4", features = ["serde"] }
 
-# CDEvents observability (TODO: enable when cdevents-sdk is published or path is available)
-# cdevents-sdk = { path = "../sdk-rust/cdevents-sdk", features = ["cloudevents"] }
-# cloudevents-sdk = { version = "0.8", default-features = false }
-# uuid = { version = "1", features = ["v4"] }
+# CDEvents observability
+cdevents-sdk = { path = "../sdk-rust/cdevents-sdk", features = ["cloudevents"] }
+cloudevents-sdk = { version = "0.8", default-features = false }
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 serde_yaml = "0.9"
