@@ -18,7 +18,7 @@ pub async fn assert_replicas(
 
     if actual != expected_replicas {
         return Err(format!(
-            "Deployment {}: expected {} replicas, got {}",
+            "deployment {}: expected {} replicas, got {}",
             deployment_name, expected_replicas, actual
         )
         .into());
@@ -48,11 +48,11 @@ pub async fn assert_traffic_split(
         .as_ref()
         .and_then(|rules| rules.first())
         .and_then(|r| r.backend_refs.as_ref())
-        .ok_or("No backend refs found")?;
+        .ok_or("no backend refs found")?;
 
     if backend_refs.len() != 2 {
         return Err(format!(
-            "Expected 2 backend refs (stable + canary), got {}",
+            "expected 2 backend refs (stable + canary), got {}",
             backend_refs.len()
         )
         .into());
@@ -63,7 +63,7 @@ pub async fn assert_traffic_split(
 
     if actual_stable != stable_weight || actual_canary != canary_weight {
         return Err(format!(
-            "Traffic split mismatch: expected {}% stable / {}% canary, got {}% / {}%",
+            "traffic split mismatch: expected {}% stable / {}% canary, got {}% / {}%",
             stable_weight, canary_weight, actual_stable, actual_canary
         )
         .into());
@@ -85,14 +85,14 @@ pub async fn assert_deployment_ready(
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
     let deployment = deployments.get(deployment_name).await?;
 
-    let status = deployment.status.ok_or("Deployment has no status")?;
+    let status = deployment.status.ok_or("deployment has no status")?;
 
     let ready = status.ready_replicas.unwrap_or(0);
     let desired = deployment.spec.and_then(|s| s.replicas).unwrap_or(0);
 
     if ready != desired {
         return Err(format!(
-            "Deployment {} not ready: {}/{} replicas",
+            "deployment {} not ready: {}/{} replicas",
             deployment_name, ready, desired
         )
         .into());
@@ -109,7 +109,7 @@ pub async fn assert_deployment_ready(
 pub fn assert_error_rate_below(error_rate: f64, threshold: f64) -> Result<(), Box<dyn Error>> {
     if error_rate > threshold {
         return Err(format!(
-            "Error rate too high: {:.2}% > {:.2}%",
+            "error rate too high: {:.2}% > {:.2}%",
             error_rate * 100.0,
             threshold * 100.0
         )
