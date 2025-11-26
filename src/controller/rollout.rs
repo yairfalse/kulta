@@ -37,11 +37,18 @@ pub enum ReconcileError {
 
 pub struct Context {
     pub client: kube::Client,
+    pub cdevents_sink: Arc<crate::controller::cdevents::CDEventsSink>,
 }
 
 impl Context {
-    pub fn new(client: kube::Client) -> Self {
-        Context { client }
+    pub fn new(
+        client: kube::Client,
+        cdevents_sink: crate::controller::cdevents::CDEventsSink,
+    ) -> Self {
+        Context {
+            client,
+            cdevents_sink: Arc::new(cdevents_sink),
+        }
     }
 
     #[cfg(test)]
@@ -57,6 +64,7 @@ impl Context {
                     // If no kubeconfig, create a dummy client for unit tests
                     panic!("Mock context requires kubeconfig or test environment")
                 }),
+            cdevents_sink: Arc::new(crate::controller::cdevents::CDEventsSink::new_mock()),
         }
     }
 }

@@ -24,7 +24,30 @@ pub struct CDEventsSink {
     mock_events: Arc<Mutex<Vec<Event>>>,
 }
 
+#[cfg(not(test))]
+impl Default for CDEventsSink {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CDEventsSink {
+    /// Create a new CDEvents sink (production mode)
+    ///
+    /// Configuration from environment variables:
+    /// - KULTA_CDEVENTS_ENABLED: "true" to enable CDEvents emission (default: false)
+    ///
+    /// # Returns
+    /// A CDEventsSink configured from environment variables
+    #[cfg(not(test))]
+    pub fn new() -> Self {
+        let enabled = std::env::var("KULTA_CDEVENTS_ENABLED")
+            .unwrap_or_else(|_| "false".to_string())
+            == "true";
+
+        CDEventsSink { enabled }
+    }
+
     #[cfg(test)]
     pub fn new_mock() -> Self {
         CDEventsSink {

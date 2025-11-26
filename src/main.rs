@@ -2,6 +2,7 @@ use futures::StreamExt;
 use kube::runtime::controller::Action;
 use kube::runtime::{watcher, Controller};
 use kube::{Api, Client};
+use kulta::controller::cdevents::CDEventsSink;
 use kulta::controller::{reconcile, Context, ReconcileError};
 use kulta::crd::rollout::Rollout;
 use std::sync::Arc;
@@ -37,8 +38,15 @@ async fn main() -> anyhow::Result<()> {
     // Create API for Rollout resources
     let rollouts = Api::<Rollout>::all(client.clone());
 
+    // Create CDEvents sink (configured from env vars)
+    let cdevents_sink = CDEventsSink::new();
+    info!(
+        enabled = std::env::var("KULTA_CDEVENTS_ENABLED").unwrap_or_else(|_| "false".to_string()),
+        "CDEvents sink configured"
+    );
+
     // Create controller context
-    let ctx = Arc::new(Context::new(client.clone()));
+    let ctx = Arc::new(Context::new(client.clone(), cdevents_sink));
 
     info!("Starting Rollout controller");
 

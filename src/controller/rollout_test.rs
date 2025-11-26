@@ -1807,3 +1807,25 @@ async fn test_build_replicasets_at_completion() {
         "At completion, all replicas should be canary"
     );
 }
+
+// TDD Cycle 1 (CDEvents Integration): RED - Test that Context includes CDEventsSink
+#[tokio::test]
+async fn test_context_includes_cdevents_sink() {
+    use crate::controller::cdevents::CDEventsSink;
+
+    // ARRANGE: Create mock CDEvents sink
+    let sink = CDEventsSink::new_mock();
+    let client = kube::Client::try_default().await.unwrap();
+
+    // ACT: Create context with both client and sink
+    let ctx = Context::new(client, sink);
+
+    // ASSERT: Verify both fields exist
+    assert!(
+        ctx.client.apiserver_version().await.is_ok(),
+        "Context should have working client"
+    );
+
+    // This will fail until we add cdevents_sink field to Context
+    let _sink = &ctx.cdevents_sink;
+}
