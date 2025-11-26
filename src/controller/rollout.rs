@@ -84,6 +84,46 @@ pub fn compute_pod_template_hash(template: &PodTemplateSpec) -> Result<String, R
     Ok(format!("{:x}", hash)[..10].to_string())
 }
 
+/// Calculate how to split total replicas between stable and canary
+///
+/// Given total replicas and canary weight percentage, calculates:
+/// - canary_replicas = ceil(total * weight / 100)
+/// - stable_replicas = total - canary_replicas
+///
+/// # Arguments
+/// * `total_replicas` - Total number of replicas desired (from rollout.spec.replicas)
+/// * `canary_weight` - Percentage of traffic to canary (0-100)
+///
+/// # Returns
+/// Tuple of (stable_replicas, canary_replicas)
+///
+/// # Examples
+/// ```ignore
+/// let (stable, canary) = calculate_replica_split(3, 0);
+/// assert_eq!(stable, 3); // 0% weight → all stable
+/// assert_eq!(canary, 0);
+///
+/// let (stable, canary) = calculate_replica_split(3, 50);
+/// assert_eq!(stable, 1); // 50% of 3 → 1 stable, 2 canary (ceil)
+/// assert_eq!(canary, 2);
+/// ```
+#[allow(dead_code)] // Temporary - will be used in reconcile loop
+fn calculate_replica_split(total_replicas: i32, canary_weight: i32) -> (i32, i32) {
+    // Calculate canary replicas (ceiling to ensure at least 1 if weight > 0)
+    let canary_replicas = if canary_weight == 0 {
+        0
+    } else if canary_weight == 100 {
+        total_replicas
+    } else {
+        ((total_replicas as f64 * canary_weight as f64) / 100.0).ceil() as i32
+    };
+
+    // Stable gets the remainder
+    let stable_replicas = total_replicas - canary_replicas;
+
+    (stable_replicas, canary_replicas)
+}
+
 /// Ensure a ReplicaSet exists (create if missing)
 ///
 /// This function is idempotent - it will:

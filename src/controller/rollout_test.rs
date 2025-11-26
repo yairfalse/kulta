@@ -1661,3 +1661,47 @@ fn test_should_progress_when_promoted() {
         "Should progress indefinite pause with promotion annotation"
     );
 }
+
+// TDD Cycle 1: RED - Test replica calculation for canary scaling
+#[test]
+fn test_calculate_replica_split_0_percent() {
+    let (stable, canary) = calculate_replica_split(3, 0);
+    assert_eq!(stable, 3, "0% weight should give all replicas to stable");
+    assert_eq!(canary, 0, "0% weight should give 0 canary replicas");
+}
+
+#[test]
+fn test_calculate_replica_split_10_percent() {
+    let (stable, canary) = calculate_replica_split(3, 10);
+    assert_eq!(stable, 2, "10% of 3 should give 2 stable replicas");
+    assert_eq!(canary, 1, "10% of 3 should give 1 canary replica (ceil)");
+}
+
+#[test]
+fn test_calculate_replica_split_50_percent() {
+    let (stable, canary) = calculate_replica_split(3, 50);
+    assert_eq!(stable, 1, "50% of 3 should give 1 stable replica");
+    assert_eq!(canary, 2, "50% of 3 should give 2 canary replicas (ceil)");
+}
+
+#[test]
+fn test_calculate_replica_split_100_percent() {
+    let (stable, canary) = calculate_replica_split(3, 100);
+    assert_eq!(stable, 0, "100% weight should give 0 stable replicas");
+    assert_eq!(canary, 3, "100% weight should give all replicas to canary");
+}
+
+#[test]
+fn test_calculate_replica_split_with_rounding() {
+    // 33% of 3 = 0.99, should ceil to 1
+    let (stable, canary) = calculate_replica_split(3, 33);
+    assert_eq!(canary, 1, "33% of 3 should ceil to 1 canary replica");
+    assert_eq!(stable, 2, "Remaining should be 2 stable replicas");
+}
+
+#[test]
+fn test_calculate_replica_split_large_count() {
+    let (stable, canary) = calculate_replica_split(10, 25);
+    assert_eq!(canary, 3, "25% of 10 should ceil to 3 canary replicas");
+    assert_eq!(stable, 7, "Remaining should be 7 stable replicas");
+}
