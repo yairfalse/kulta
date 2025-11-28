@@ -1,4 +1,5 @@
 use crate::controller::cdevents::emit_status_change_event;
+use crate::controller::prometheus::PrometheusClient;
 use crate::crd::rollout::{Phase, Rollout};
 use chrono::{DateTime, Utc};
 #[cfg(test)]
@@ -39,16 +40,19 @@ pub enum ReconcileError {
 pub struct Context {
     pub client: kube::Client,
     pub cdevents_sink: Arc<crate::controller::cdevents::CDEventsSink>,
+    pub prometheus_client: Arc<PrometheusClient>,
 }
 
 impl Context {
     pub fn new(
         client: kube::Client,
         cdevents_sink: crate::controller::cdevents::CDEventsSink,
+        prometheus_client: PrometheusClient,
     ) -> Self {
         Context {
             client,
             cdevents_sink: Arc::new(cdevents_sink),
+            prometheus_client: Arc::new(prometheus_client),
         }
     }
 
@@ -66,6 +70,7 @@ impl Context {
                     panic!("Mock context requires kubeconfig or test environment")
                 }),
             cdevents_sink: Arc::new(crate::controller::cdevents::CDEventsSink::new_mock()),
+            prometheus_client: Arc::new(PrometheusClient::new_mock()),
         }
     }
 }

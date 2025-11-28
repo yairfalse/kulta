@@ -1839,7 +1839,7 @@ async fn test_context_includes_cdevents_sink() {
     let client = kube::Client::try_default().await.unwrap();
 
     // ACT: Create context with both client and sink
-    let ctx = Context::new(client, sink);
+    let ctx = Context::new(client, sink, PrometheusClient::new_mock());
 
     // ASSERT: Verify both fields exist
     assert!(

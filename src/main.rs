@@ -3,6 +3,7 @@ use kube::runtime::controller::Action;
 use kube::runtime::{watcher, Controller};
 use kube::{Api, Client};
 use kulta::controller::cdevents::CDEventsSink;
+use kulta::controller::prometheus::PrometheusClient;
 use kulta::controller::{reconcile, Context, ReconcileError};
 use kulta::crd::rollout::Rollout;
 use std::sync::Arc;
@@ -45,8 +46,23 @@ async fn main() -> anyhow::Result<()> {
         "CDEvents sink configured"
     );
 
+    // Create Prometheus client (configured from env var)
+    let prometheus_address =
+        std::env::var("KULTA_PROMETHEUS_ADDRESS").unwrap_or_else(|_| "".to_string());
+    let prometheus_client = if prometheus_address.is_empty() {
+        info!("Prometheus address not configured - metrics analysis disabled");
+        PrometheusClient::new("http://localhost:9090".to_string()) // Dummy address, metrics will be skipped
+    } else {
+        info!(address = %prometheus_address, "Prometheus client configured");
+        PrometheusClient::new(prometheus_address)
+    };
+
     // Create controller context
-    let ctx = Arc::new(Context::new(client.clone(), cdevents_sink));
+    let ctx = Arc::new(Context::new(
+        client.clone(),
+        cdevents_sink,
+        prometheus_client,
+    ));
 
     info!("Starting Rollout controller");
 
