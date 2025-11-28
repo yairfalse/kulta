@@ -160,6 +160,47 @@ impl PrometheusClient {
             .ok_or_else(|| PrometheusError::HttpError("No mock response set".to_string()))?;
         parse_prometheus_instant_query(response)
     }
+
+    /// Evaluate a metric by name against threshold
+    ///
+    /// Builds the appropriate PromQL query from the metric name template,
+    /// executes it, and compares the result to the threshold.
+    ///
+    /// # Arguments
+    /// * `metric_name` - Template name ("error-rate", "latency-p95", "latency-p99")
+    /// * `rollout_name` - Name of the rollout
+    /// * `revision` - Revision label ("canary" or "stable")
+    /// * `threshold` - Threshold value (metric must be below this)
+    ///
+    /// # Returns
+    /// * `Ok(true)` - Metric is healthy (below threshold)
+    /// * `Ok(false)` - Metric is unhealthy (above or equal to threshold)
+    /// * `Err(_)` - Query execution failed
+    pub async fn evaluate_metric(
+        &self,
+        metric_name: &str,
+        rollout_name: &str,
+        revision: &str,
+        threshold: f64,
+    ) -> Result<bool, PrometheusError> {
+        // Build query from template
+        let query = match metric_name {
+            "error-rate" => build_error_rate_query(rollout_name, revision),
+            "latency-p95" => build_latency_p95_query(rollout_name, revision),
+            _ => {
+                return Err(PrometheusError::InvalidQuery(format!(
+                    "Unknown metric template: {}",
+                    metric_name
+                )))
+            }
+        };
+
+        // Execute query
+        let value = self.query_instant(&query).await?;
+
+        // Compare to threshold (healthy if < threshold)
+        Ok(value < threshold)
+    }
 }
 
 #[cfg(test)]
@@ -289,5 +330,74 @@ mod tests {
         let result = client.query_instant(query).await;
 
         assert!(matches!(result, Err(PrometheusError::NoData)));
+    }
+
+    // TDD Cycle 3 Part 2: RED - Test evaluating error-rate metric
+    #[tokio::test]
+    async fn test_evaluate_error_rate_healthy() {
+        let client = PrometheusClient::new_mock();
+
+        // Mock response: error rate = 2.5% (healthy, below threshold)
+        let mock_response = r#"{
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [
+                    {
+                        "metric": {},
+                        "value": [1234567890, "2.5"]
+                    }
+                ]
+            }
+        }"#;
+        client.set_mock_response(mock_response.to_string());
+
+        // Evaluate error-rate metric with threshold = 5.0
+        let rollout_name = "my-app";
+        let revision = "canary";
+        let threshold = 5.0;
+
+        let result = client
+            .evaluate_metric("error-rate", rollout_name, revision, threshold)
+            .await;
+
+        match result {
+            Ok(is_healthy) => assert!(is_healthy, "Error rate 2.5% should be healthy (< 5.0%)"),
+            Err(e) => panic!("Should evaluate successfully, got error: {}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_error_rate_unhealthy() {
+        let client = PrometheusClient::new_mock();
+
+        // Mock response: error rate = 8.0% (unhealthy, exceeds threshold)
+        let mock_response = r#"{
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [
+                    {
+                        "metric": {},
+                        "value": [1234567890, "8.0"]
+                    }
+                ]
+            }
+        }"#;
+        client.set_mock_response(mock_response.to_string());
+
+        // Evaluate error-rate metric with threshold = 5.0
+        let rollout_name = "my-app";
+        let revision = "canary";
+        let threshold = 5.0;
+
+        let result = client
+            .evaluate_metric("error-rate", rollout_name, revision, threshold)
+            .await;
+
+        match result {
+            Ok(is_healthy) => assert!(!is_healthy, "Error rate 8.0% should be unhealthy (> 5.0%)"),
+            Err(e) => panic!("Should evaluate successfully, got error: {}", e),
+        }
     }
 }
