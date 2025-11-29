@@ -750,7 +750,7 @@ fn validate_rollout(rollout: &Rollout) -> Result<(), String> {
         for (i, step) in canary.steps.iter().enumerate() {
             // Validate weight is in 0-100 range
             if let Some(weight) = step.set_weight {
-                if weight < 0 || weight > 100 {
+                if !(0..=100).contains(&weight) {
                     return Err(format!(
                         "steps[{}].setWeight must be 0-100, got {}",
                         i, weight
