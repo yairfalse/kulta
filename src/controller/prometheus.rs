@@ -201,6 +201,47 @@ impl PrometheusClient {
         // Compare to threshold (healthy if < threshold)
         Ok(value < threshold)
     }
+
+    /// Evaluate all metrics from analysis config
+    ///
+    /// Iterates through all metrics and evaluates each one.
+    /// Returns Ok(true) only if ALL metrics are healthy.
+    ///
+    /// # Arguments
+    /// * `metrics` - List of metrics from Rollout's analysis config
+    /// * `rollout_name` - Name of the rollout
+    /// * `revision` - Revision label ("canary" or "stable")
+    ///
+    /// # Returns
+    /// * `Ok(true)` - All metrics healthy (below thresholds)
+    /// * `Ok(false)` - One or more metrics unhealthy
+    /// * `Err(_)` - Query execution failed
+    pub async fn evaluate_all_metrics(
+        &self,
+        metrics: &[crate::crd::rollout::MetricConfig],
+        rollout_name: &str,
+        revision: &str,
+    ) -> Result<bool, PrometheusError> {
+        // Empty metrics list = no constraints = healthy
+        if metrics.is_empty() {
+            return Ok(true);
+        }
+
+        // Evaluate each metric
+        for metric in metrics {
+            let is_healthy = self
+                .evaluate_metric(&metric.name, rollout_name, revision, metric.threshold)
+                .await?;
+
+            // If ANY metric is unhealthy, return false immediately
+            if !is_healthy {
+                return Ok(false);
+            }
+        }
+
+        // All metrics passed
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -397,6 +438,124 @@ mod tests {
 
         match result {
             Ok(is_healthy) => assert!(!is_healthy, "Error rate 8.0% should be unhealthy (> 5.0%)"),
+            Err(e) => panic!("Should evaluate successfully, got error: {}", e),
+        }
+    }
+
+    // TDD Cycle 3 Part 3: RED - Test evaluating all metrics from config
+    #[tokio::test]
+    async fn test_evaluate_all_metrics_all_healthy() {
+        use crate::crd::rollout::MetricConfig;
+
+        let client = PrometheusClient::new_mock();
+
+        // Mock response: error rate = 2.5% (healthy)
+        let mock_response = r#"{
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [
+                    {
+                        "metric": {},
+                        "value": [1234567890, "2.5"]
+                    }
+                ]
+            }
+        }"#;
+        client.set_mock_response(mock_response.to_string());
+
+        // Define metrics to evaluate
+        let metrics = vec![
+            MetricConfig {
+                name: "error-rate".to_string(),
+                threshold: 5.0,
+                interval: None,
+                failure_threshold: None,
+                min_sample_size: None,
+            },
+            MetricConfig {
+                name: "latency-p95".to_string(),
+                threshold: 100.0,
+                interval: None,
+                failure_threshold: None,
+                min_sample_size: None,
+            },
+        ];
+
+        let rollout_name = "my-app";
+        let revision = "canary";
+
+        let result = client
+            .evaluate_all_metrics(&metrics, rollout_name, revision)
+            .await;
+
+        match result {
+            Ok(is_healthy) => assert!(is_healthy, "All metrics should be healthy"),
+            Err(e) => panic!("Should evaluate successfully, got error: {}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_all_metrics_one_unhealthy() {
+        use crate::crd::rollout::MetricConfig;
+
+        let client = PrometheusClient::new_mock();
+
+        // Mock response: error rate = 8.0% (unhealthy)
+        let mock_response = r#"{
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [
+                    {
+                        "metric": {},
+                        "value": [1234567890, "8.0"]
+                    }
+                ]
+            }
+        }"#;
+        client.set_mock_response(mock_response.to_string());
+
+        // Define metrics (error-rate will be unhealthy)
+        let metrics = vec![MetricConfig {
+            name: "error-rate".to_string(),
+            threshold: 5.0,
+            interval: None,
+            failure_threshold: None,
+            min_sample_size: None,
+        }];
+
+        let rollout_name = "my-app";
+        let revision = "canary";
+
+        let result = client
+            .evaluate_all_metrics(&metrics, rollout_name, revision)
+            .await;
+
+        match result {
+            Ok(is_healthy) => assert!(
+                !is_healthy,
+                "Should be unhealthy when error-rate exceeds threshold"
+            ),
+            Err(e) => panic!("Should evaluate successfully, got error: {}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_all_metrics_empty_list() {
+        let client = PrometheusClient::new_mock();
+
+        // Empty metrics list should be considered healthy (nothing to fail)
+        let metrics = vec![];
+        let rollout_name = "my-app";
+        let revision = "canary";
+
+        let result = client
+            .evaluate_all_metrics(&metrics, rollout_name, revision)
+            .await;
+
+        match result {
+            Ok(is_healthy) => assert!(is_healthy, "Empty metrics list should be healthy"),
             Err(e) => panic!("Should evaluate successfully, got error: {}", e),
         }
     }
