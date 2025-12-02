@@ -148,21 +148,62 @@ pub struct MetricConfig {
 }
 
 /// Phase of a Rollout
-///
-/// Represents the current lifecycle stage of the rollout
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq, JsonSchema)]
 pub enum Phase {
-    /// Initial phase when rollout is being set up
     #[default]
     Initializing,
-    /// Rollout is actively progressing through canary steps
     Progressing,
-    /// Rollout is paused waiting for manual promotion or duration
     Paused,
-    /// Rollout successfully completed (100% canary)
     Completed,
-    /// Rollout failed and requires manual intervention
     Failed,
+}
+
+/// Action taken by the controller
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub enum DecisionAction {
+    Initialize,
+    StepAdvance,
+    Promotion,
+    Rollback,
+    Pause,
+    Resume,
+    Complete,
+}
+
+/// Reason for the decision
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub enum DecisionReason {
+    AnalysisPassed,
+    AnalysisFailed,
+    PauseDurationExpired,
+    ManualPromotion,
+    ManualRollback,
+    Timeout,
+    Initialization,
+}
+
+/// Metric snapshot at decision time
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct MetricSnapshot {
+    pub value: f64,
+    pub threshold: f64,
+    pub passed: bool,
+}
+
+/// Decision record for observability
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct Decision {
+    pub timestamp: String,
+    pub action: DecisionAction,
+    #[serde(rename = "fromStep", skip_serializing_if = "Option::is_none")]
+    pub from_step: Option<i32>,
+    #[serde(rename = "toStep", skip_serializing_if = "Option::is_none")]
+    pub to_step: Option<i32>,
+    pub reason: DecisionReason,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<std::collections::HashMap<String, MetricSnapshot>>,
 }
 
 /// Status of the Rollout
@@ -199,6 +240,10 @@ pub struct RolloutStatus {
     /// Timestamp when current pause started (RFC3339 format)
     #[serde(rename = "pauseStartTime", skip_serializing_if = "Option::is_none")]
     pub pause_start_time: Option<String>,
+
+    /// Decision history for observability
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<Decision>,
 }
 
 #[cfg(test)]
