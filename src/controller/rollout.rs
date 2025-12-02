@@ -161,11 +161,7 @@ async fn ensure_replicaset_exists(
     match rs_api.get(rs_name).await {
         Ok(existing) => {
             // Check if replicas need scaling
-            let current_replicas = existing
-                .spec
-                .as_ref()
-                .and_then(|s| s.replicas)
-                .unwrap_or(0);
+            let current_replicas = existing.spec.as_ref().and_then(|s| s.replicas).unwrap_or(0);
 
             if current_replicas != replicas {
                 // Replicas need updating - scale the ReplicaSet
@@ -186,7 +182,11 @@ async fn ensure_replicaset_exists(
                 });
 
                 rs_api
-                    .patch(rs_name, &PatchParams::default(), &Patch::Merge(&scale_patch))
+                    .patch(
+                        rs_name,
+                        &PatchParams::default(),
+                        &Patch::Merge(&scale_patch),
+                    )
                     .await?;
 
                 info!(
@@ -764,10 +764,7 @@ fn validate_rollout(rollout: &Rollout) -> Result<(), String> {
             if let Some(pause) = &step.pause {
                 if let Some(duration) = &pause.duration {
                     if parse_duration(duration).is_none() {
-                        return Err(format!(
-                            "steps[{}].pause.duration invalid: {}",
-                            i, duration
-                        ));
+                        return Err(format!("steps[{}].pause.duration invalid: {}", i, duration));
                     }
                 }
             }
@@ -1128,19 +1125,17 @@ fn calculate_requeue_interval_from_rollout(rollout: &Rollout, status: &RolloutSt
         .map(|dt| dt.with_timezone(&Utc));
 
     // Get current step's pause duration
-    let pause_duration = status
-        .current_step_index
-        .and_then(|step_index| {
-            rollout
-                .spec
-                .strategy
-                .canary
-                .as_ref()
-                .and_then(|canary| canary.steps.get(step_index as usize))
-                .and_then(|step| step.pause.as_ref())
-                .and_then(|pause| pause.duration.as_ref())
-                .and_then(|dur_str| parse_duration(dur_str))
-        });
+    let pause_duration = status.current_step_index.and_then(|step_index| {
+        rollout
+            .spec
+            .strategy
+            .canary
+            .as_ref()
+            .and_then(|canary| canary.steps.get(step_index as usize))
+            .and_then(|step| step.pause.as_ref())
+            .and_then(|pause| pause.duration.as_ref())
+            .and_then(|dur_str| parse_duration(dur_str))
+    });
 
     calculate_requeue_interval(pause_start.as_ref(), pause_duration)
 }

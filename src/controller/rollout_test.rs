@@ -2030,13 +2030,11 @@ async fn test_replicaset_scaling_on_weight_change() {
     // ASSERT: Verify the ReplicaSets have the same name but different replica counts
     // This tests that ensure_replicaset_exists() should SCALE existing RS, not recreate
     assert_eq!(
-        stable_rs_step0.metadata.name,
-        stable_rs_step1.metadata.name,
+        stable_rs_step0.metadata.name, stable_rs_step1.metadata.name,
         "Stable ReplicaSet name should remain constant across steps"
     );
     assert_eq!(
-        canary_rs_step0.metadata.name,
-        canary_rs_step1.metadata.name,
+        canary_rs_step0.metadata.name, canary_rs_step1.metadata.name,
         "Canary ReplicaSet name should remain constant across steps"
     );
 
@@ -2172,7 +2170,13 @@ async fn test_validate_rollout_invalid_pause_duration() {
 async fn test_validate_rollout_empty_canary_service() {
     // ARRANGE: Create rollout with empty canary service name
     let mut rollout = create_test_rollout_with_canary();
-    rollout.spec.strategy.canary.as_mut().unwrap().canary_service = String::new();
+    rollout
+        .spec
+        .strategy
+        .canary
+        .as_mut()
+        .unwrap()
+        .canary_service = String::new();
 
     // ACT: Validate rollout
     let result = validate_rollout(&rollout);
@@ -2191,7 +2195,13 @@ async fn test_validate_rollout_empty_canary_service() {
 async fn test_validate_rollout_empty_stable_service() {
     // ARRANGE: Create rollout with empty stable service name
     let mut rollout = create_test_rollout_with_canary();
-    rollout.spec.strategy.canary.as_mut().unwrap().stable_service = String::new();
+    rollout
+        .spec
+        .strategy
+        .canary
+        .as_mut()
+        .unwrap()
+        .stable_service = String::new();
 
     // ACT: Validate rollout
     let result = validate_rollout(&rollout);
@@ -2210,12 +2220,17 @@ async fn test_validate_rollout_empty_stable_service() {
 async fn test_validate_rollout_empty_httproute() {
     // ARRANGE: Create rollout with empty HTTPRoute name
     let mut rollout = create_test_rollout_with_canary();
-    rollout.spec.strategy.canary.as_mut().unwrap().traffic_routing =
-        Some(TrafficRouting {
-            gateway_api: Some(GatewayAPIRouting {
-                http_route: String::new(), // Empty HTTPRoute name
-            }),
-        });
+    rollout
+        .spec
+        .strategy
+        .canary
+        .as_mut()
+        .unwrap()
+        .traffic_routing = Some(TrafficRouting {
+        gateway_api: Some(GatewayAPIRouting {
+            http_route: String::new(), // Empty HTTPRoute name
+        }),
+    });
 
     // ACT: Validate rollout
     let result = validate_rollout(&rollout);
@@ -2247,12 +2262,17 @@ async fn test_validate_rollout_valid_rollout() {
             pause: None,
         },
     ];
-    rollout.spec.strategy.canary.as_mut().unwrap().traffic_routing =
-        Some(TrafficRouting {
-            gateway_api: Some(GatewayAPIRouting {
-                http_route: "my-httproute".to_string(),
-            }),
-        });
+    rollout
+        .spec
+        .strategy
+        .canary
+        .as_mut()
+        .unwrap()
+        .traffic_routing = Some(TrafficRouting {
+        gateway_api: Some(GatewayAPIRouting {
+            http_route: "my-httproute".to_string(),
+        }),
+    });
 
     // ACT: Validate rollout
     let result = validate_rollout(&rollout);
