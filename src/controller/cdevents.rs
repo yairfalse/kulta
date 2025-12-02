@@ -1,9 +1,9 @@
-//! CDEvents integration for observability
-//!
-//! This module handles emission of CDEvents to track the lifecycle of progressive rollouts.
+//! CDEvents emission for rollout observability.
+//! See `docs/design/cdevents-observability.md` for specification.
 
 use crate::crd::rollout::{Rollout, RolloutStatus};
 use cloudevents::Event;
+use serde_json::json;
 use thiserror::Error;
 
 #[cfg(test)]
@@ -180,15 +180,13 @@ pub async fn emit_status_change_event(
 /// Build a service.deployed CDEvent
 fn build_service_deployed_event(
     rollout: &Rollout,
-    _status: &RolloutStatus,
+    status: &RolloutStatus,
 ) -> Result<Event, CDEventsError> {
     use cdevents_sdk::latest::service_deployed;
     use cdevents_sdk::{CDEvent, Subject};
 
-    // Extract image from rollout spec (artifact_id)
     let image = extract_image_from_rollout(rollout)?;
 
-    // Extract namespace and name
     let namespace = rollout
         .metadata
         .namespace
@@ -200,7 +198,6 @@ fn build_service_deployed_event(
         .as_ref()
         .ok_or_else(|| CDEventsError::Generic("rollout missing name".to_string()))?;
 
-    // Build CDEvent
     let cdevent = CDEvent::from(
         Subject::from(service_deployed::Content {
             artifact_id: image
@@ -243,9 +240,9 @@ fn build_service_deployed_event(
         "https://kulta.io"
             .try_into()
             .map_err(|e| CDEventsError::Generic(format!("Invalid event source: {}", e)))?,
-    );
+    )
+    .with_custom_data(build_kulta_custom_data(rollout, status, "initialization"));
 
-    // Convert to CloudEvent
     let cloudevent: Event = cdevent
         .try_into()
         .map_err(|e| CDEventsError::Generic(format!("Failed to convert to CloudEvent: {}", e)))?;
@@ -321,7 +318,8 @@ fn build_service_upgraded_event(
         "https://kulta.io"
             .try_into()
             .map_err(|e| CDEventsError::Generic(format!("Invalid event source: {}", e)))?,
-    );
+    )
+    .with_custom_data(build_kulta_custom_data(rollout, status, "step_advanced"));
 
     // Convert to CloudEvent
     let cloudevent: Event = cdevent
@@ -334,15 +332,13 @@ fn build_service_upgraded_event(
 /// Build a service.rolledback CDEvent
 fn build_service_rolledback_event(
     rollout: &Rollout,
-    _status: &RolloutStatus,
+    status: &RolloutStatus,
 ) -> Result<Event, CDEventsError> {
     use cdevents_sdk::latest::service_rolledback;
     use cdevents_sdk::{CDEvent, Subject};
 
-    // Extract image from rollout spec (artifact_id)
     let image = extract_image_from_rollout(rollout)?;
 
-    // Extract namespace and name
     let namespace = rollout
         .metadata
         .namespace
@@ -354,7 +350,6 @@ fn build_service_rolledback_event(
         .as_ref()
         .ok_or_else(|| CDEventsError::Generic("Rollout missing name".to_string()))?;
 
-    // Build CDEvent
     let cdevent = CDEvent::from(
         Subject::from(service_rolledback::Content {
             artifact_id: image
@@ -397,9 +392,9 @@ fn build_service_rolledback_event(
         "https://kulta.io"
             .try_into()
             .map_err(|e| CDEventsError::Generic(format!("Invalid event source: {}", e)))?,
-    );
+    )
+    .with_custom_data(build_kulta_custom_data(rollout, status, "analysis_failed"));
 
-    // Convert to CloudEvent
     let cloudevent: Event = cdevent
         .try_into()
         .map_err(|e| CDEventsError::Generic(format!("Failed to convert to CloudEvent: {}", e)))?;
@@ -410,7 +405,7 @@ fn build_service_rolledback_event(
 /// Build a service.published CDEvent
 fn build_service_published_event(
     rollout: &Rollout,
-    _status: &RolloutStatus,
+    status: &RolloutStatus,
 ) -> Result<Event, CDEventsError> {
     use cdevents_sdk::latest::service_published;
     use cdevents_sdk::{CDEvent, Subject};
@@ -467,14 +462,56 @@ fn build_service_published_event(
         "https://kulta.io"
             .try_into()
             .map_err(|e| CDEventsError::Generic(format!("Invalid event source: {}", e)))?,
-    );
+    )
+    .with_custom_data(build_kulta_custom_data(rollout, status, "completed"));
 
-    // Convert to CloudEvent
     let cloudevent: Event = cdevent
         .try_into()
         .map_err(|e| CDEventsError::Generic(format!("Failed to convert to CloudEvent: {}", e)))?;
 
     Ok(cloudevent)
+}
+
+/// Build KULTA customData for CDEvents
+fn build_kulta_custom_data(
+    rollout: &Rollout,
+    status: &RolloutStatus,
+    decision_reason: &str,
+) -> serde_json::Value {
+    let strategy = if rollout.spec.strategy.canary.is_some() {
+        "canary"
+    } else {
+        "simple"
+    };
+
+    let total_steps = rollout
+        .spec
+        .strategy
+        .canary
+        .as_ref()
+        .map(|c| c.steps.len())
+        .unwrap_or(0);
+
+    json!({
+        "kulta": {
+            "version": "v1",
+            "rollout": {
+                "name": rollout.metadata.name.as_deref().unwrap_or("unknown"),
+                "namespace": rollout.metadata.namespace.as_deref().unwrap_or("default"),
+                "uid": rollout.metadata.uid.as_deref().unwrap_or(""),
+                "generation": rollout.metadata.generation.unwrap_or(0)
+            },
+            "strategy": strategy,
+            "step": {
+                "index": status.current_step_index.unwrap_or(0),
+                "total": total_steps,
+                "traffic_weight": status.current_weight.unwrap_or(0)
+            },
+            "decision": {
+                "reason": decision_reason
+            }
+        }
+    })
 }
 
 /// Extract image from rollout's pod template
