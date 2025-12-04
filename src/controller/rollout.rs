@@ -714,6 +714,69 @@ pub fn build_replicaset(
     })
 }
 
+/// Build a ReplicaSet for a simple strategy Rollout
+///
+/// Creates a single ReplicaSet (no stable/canary split) with:
+/// - Name: {rollout-name} (no suffix)
+/// - Labels: pod-template-hash, kulta.io/managed-by
+/// - Spec: from Rollout's template
+///
+/// # Errors
+/// Returns error if Rollout is missing name or if PodTemplateSpec cannot be serialized
+pub fn build_replicaset_for_simple(
+    rollout: &Rollout,
+    replicas: i32,
+) -> Result<ReplicaSet, ReconcileError> {
+    let rollout_name = rollout
+        .metadata
+        .name
+        .as_ref()
+        .ok_or(ReconcileError::MissingName)?;
+    let namespace = rollout.metadata.namespace.clone();
+
+    // Compute pod template hash
+    let pod_template_hash = compute_pod_template_hash(&rollout.spec.template)?;
+
+    // Clone the pod template and add labels
+    let mut template = rollout.spec.template.clone();
+    let mut labels = template
+        .metadata
+        .as_ref()
+        .and_then(|m| m.labels.clone())
+        .unwrap_or_default();
+
+    labels.insert("pod-template-hash".to_string(), pod_template_hash.clone());
+    labels.insert("kulta.io/managed-by".to_string(), "kulta".to_string());
+
+    // Update template metadata
+    let mut template_metadata = template.metadata.unwrap_or_default();
+    template_metadata.labels = Some(labels.clone());
+    template.metadata = Some(template_metadata);
+
+    // Build selector (must match pod labels)
+    let selector = LabelSelector {
+        match_labels: Some(labels.clone()),
+        ..Default::default()
+    };
+
+    // Build ReplicaSet - no suffix for simple strategy
+    Ok(ReplicaSet {
+        metadata: ObjectMeta {
+            name: Some(rollout_name.clone()),
+            namespace,
+            labels: Some(labels),
+            ..Default::default()
+        },
+        spec: Some(ReplicaSetSpec {
+            replicas: Some(replicas),
+            selector,
+            template: Some(template),
+            ..Default::default()
+        }),
+        status: None,
+    })
+}
+
 /// Validate Rollout specification
 ///
 /// Validates runtime constraints that cannot be enforced via CRD schema.

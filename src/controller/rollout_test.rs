@@ -1,9 +1,80 @@
 use super::*;
 use crate::crd::rollout::{
     CanaryStep, CanaryStrategy, GatewayAPIRouting, PauseDuration, Phase, Rollout, RolloutSpec,
-    RolloutStatus, RolloutStrategy, TrafficRouting,
+    RolloutStatus, RolloutStrategy, SimpleStrategy, TrafficRouting,
 };
 use kube::api::ObjectMeta;
+
+// Helper function to create a test Rollout with simple strategy
+fn create_test_rollout_with_simple() -> Rollout {
+    Rollout {
+        metadata: ObjectMeta {
+            name: Some("simple-rollout".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector {
+                match_labels: Some(
+                    vec![("app".to_string(), "simple-app".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..Default::default()
+            },
+            template: k8s_openapi::api::core::v1::PodTemplateSpec {
+                metadata: Some(ObjectMeta {
+                    labels: Some(
+                        vec![("app".to_string(), "simple-app".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..Default::default()
+                }),
+                spec: Some(k8s_openapi::api::core::v1::PodSpec {
+                    containers: vec![k8s_openapi::api::core::v1::Container {
+                        name: "app".to_string(),
+                        image: Some("nginx:1.0".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            },
+            strategy: RolloutStrategy {
+                simple: Some(SimpleStrategy { analysis: None }),
+                canary: None,
+            },
+        },
+        status: None,
+    }
+}
+
+// TDD Cycle 2 (Simple Strategy): RED - Test that simple strategy creates single ReplicaSet
+#[test]
+fn test_simple_strategy_creates_single_replicaset() {
+    // ARRANGE: Create rollout with simple strategy
+    let rollout = create_test_rollout_with_simple();
+
+    // ACT: Build ReplicaSet for simple strategy (all replicas in one RS)
+    let rs = build_replicaset_for_simple(&rollout, rollout.spec.replicas).unwrap();
+
+    // ASSERT: ReplicaSet has all replicas and correct naming
+    assert_eq!(
+        rs.metadata.name.as_deref(),
+        Some("simple-rollout") // No -stable/-canary suffix
+    );
+    assert_eq!(rs.spec.as_ref().unwrap().replicas, Some(3));
+
+    // Verify labels
+    let labels = rs.metadata.labels.as_ref().unwrap();
+    assert_eq!(labels.get("app"), Some(&"simple-app".to_string()));
+    assert!(labels.contains_key("pod-template-hash"));
+    assert_eq!(
+        labels.get("kulta.io/managed-by"),
+        Some(&"kulta".to_string())
+    );
+}
 
 // Helper function to create a test Rollout with canary strategy
 fn create_test_rollout_with_canary() -> Rollout {
