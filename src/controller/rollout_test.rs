@@ -50,7 +50,7 @@ fn create_test_rollout_with_simple() -> Rollout {
     }
 }
 
-// TDD Cycle 2 (Simple Strategy): RED - Test that simple strategy creates single ReplicaSet
+// TDD Cycle 2 (Simple Strategy): Test that simple strategy creates single ReplicaSet
 #[test]
 fn test_simple_strategy_creates_single_replicaset() {
     // ARRANGE: Create rollout with simple strategy
@@ -74,6 +74,22 @@ fn test_simple_strategy_creates_single_replicaset() {
         labels.get("kulta.io/managed-by"),
         Some(&"kulta".to_string())
     );
+}
+
+// TDD Cycle 3 (Simple Strategy): RED - Test status for simple strategy
+#[test]
+fn test_compute_desired_status_for_simple_strategy() {
+    // ARRANGE: Create rollout with simple strategy (no status yet)
+    let rollout = create_test_rollout_with_simple();
+
+    // ACT: Compute desired status
+    let status = compute_desired_status(&rollout);
+
+    // ASSERT: Simple strategy goes directly to Completed (no steps)
+    assert_eq!(status.phase, Some(Phase::Completed));
+    assert_eq!(status.current_step_index, None); // No steps in simple
+    assert_eq!(status.current_weight, None); // No traffic weight in simple
+    assert!(status.message.is_some());
 }
 
 // Helper function to create a test Rollout with canary strategy

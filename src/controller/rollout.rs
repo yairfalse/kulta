@@ -399,10 +399,14 @@ pub fn calculate_traffic_weights(rollout: &Rollout) -> (i32, i32) {
 
 /// Initialize RolloutStatus for a new Rollout
 ///
-/// Sets up initial status with:
+/// For canary strategy:
 /// - current_step_index = 0 (first step)
 /// - phase = "Progressing"
 /// - current_weight from first step's setWeight
+///
+/// For simple strategy:
+/// - phase = "Completed" (no steps to progress through)
+/// - No step index or weight (not applicable)
 ///
 /// # Arguments
 /// * `rollout` - The Rollout to initialize status for
@@ -412,11 +416,23 @@ pub fn calculate_traffic_weights(rollout: &Rollout) -> (i32, i32) {
 pub fn initialize_rollout_status(rollout: &Rollout) -> crate::crd::rollout::RolloutStatus {
     use crate::crd::rollout::RolloutStatus;
 
+    // Check for simple strategy first
+    if rollout.spec.strategy.simple.is_some() {
+        // Simple strategy: no steps, just deploy and complete
+        return RolloutStatus {
+            phase: Some(Phase::Completed),
+            current_step_index: None,
+            current_weight: None,
+            message: Some("Simple rollout completed: all replicas updated".to_string()),
+            ..Default::default()
+        };
+    }
+
     // Get canary strategy
     let canary_strategy = match &rollout.spec.strategy.canary {
         Some(strategy) => strategy,
         None => {
-            // No canary strategy - return default status
+            // No strategy defined - return default status
             return RolloutStatus::default();
         }
     };
