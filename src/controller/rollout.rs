@@ -1009,6 +1009,20 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
             "Built simple ReplicaSet"
         );
         ensure_replicaset_exists(&rs_api, &rs, "simple", rollout.spec.replicas).await?;
+    } else if rollout.spec.strategy.blue_green.is_some() {
+        // Blue-green strategy: active + preview ReplicaSets (both full size)
+        let (active_rs, preview_rs) =
+            build_replicasets_for_blue_green(&rollout, rollout.spec.replicas)?;
+
+        info!(
+            rollout = ?name,
+            strategy = "blue-green",
+            replicas = rollout.spec.replicas,
+            "Built blue-green ReplicaSets"
+        );
+
+        ensure_replicaset_exists(&rs_api, &active_rs, "active", rollout.spec.replicas).await?;
+        ensure_replicaset_exists(&rs_api, &preview_rs, "preview", rollout.spec.replicas).await?;
     } else {
         // Canary strategy: stable + canary ReplicaSets with traffic-based scaling
         let current_weight = rollout
