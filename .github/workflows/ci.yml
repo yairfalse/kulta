@@ -65,6 +65,8 @@ jobs:
     # Skip on draft PRs to save cost
     if: github.event_name == 'push' || !github.event.pull_request.draft
     needs: build
+    env:
+      KULTA_RUN_INTEGRATION_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
 
