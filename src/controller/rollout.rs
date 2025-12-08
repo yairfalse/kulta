@@ -36,6 +36,9 @@ pub enum ReconcileError {
 
     #[error("Invalid Rollout spec: {0}")]
     ValidationError(String),
+
+    #[error("Metrics evaluation failed: {0}")]
+    MetricsEvaluationFailed(String),
 }
 
 pub struct Context {
@@ -1266,6 +1269,52 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
     // Calculate optimal requeue interval based on pause state
     let requeue_interval = calculate_requeue_interval_from_rollout(&rollout, &desired_status);
     Ok(Action::requeue(requeue_interval))
+}
+
+/// Evaluate rollout metrics against Prometheus thresholds
+///
+/// Checks if the canary revision is healthy based on the analysis config.
+/// Returns Ok(true) if healthy, Ok(false) if unhealthy.
+///
+/// # Arguments
+/// * `rollout` - The Rollout to evaluate
+/// * `ctx` - Controller context with PrometheusClient
+///
+/// # Returns
+/// * `Ok(true)` - All metrics healthy (or no analysis config)
+/// * `Ok(false)` - One or more metrics unhealthy
+/// * `Err(_)` - Query execution failed
+#[allow(dead_code)] // Will be used in reconcile loop (TDD Cycle 4 Part 2)
+async fn evaluate_rollout_metrics(
+    rollout: &Rollout,
+    ctx: &Context,
+) -> Result<bool, ReconcileError> {
+    // Check if rollout has canary strategy with analysis config
+    let analysis_config = match &rollout.spec.strategy.canary {
+        Some(canary_strategy) => match &canary_strategy.analysis {
+            Some(analysis) => analysis,
+            None => {
+                // No analysis config - consider healthy (no constraints)
+                return Ok(true);
+            }
+        },
+        None => {
+            // No canary strategy - no metrics to check
+            return Ok(true);
+        }
+    };
+
+    // Get rollout name for Prometheus labels
+    let rollout_name = rollout.name_any();
+
+    // Evaluate all metrics
+    let is_healthy = ctx
+        .prometheus_client
+        .evaluate_all_metrics(&analysis_config.metrics, &rollout_name, "canary")
+        .await
+        .map_err(|e| ReconcileError::MetricsEvaluationFailed(e.to_string()))?;
+
+    Ok(is_healthy)
 }
 
 /// Calculate optimal requeue interval based on rollout pause state
