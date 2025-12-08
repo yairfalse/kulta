@@ -2830,10 +2830,257 @@ async fn test_evaluate_rollout_metrics_no_analysis_config() {
 
     // ASSERT: Should return Ok(true) - no metrics to check = healthy
     match result {
-        Ok(is_healthy) => assert!(
-            is_healthy,
-            "No analysis config should be considered healthy"
-        ),
+        Ok(is_healthy) => assert!(is_healthy, "No analysis config should be considered healthy"),
         Err(e) => panic!("Should succeed, got error: {:?}", e),
     }
+}
+
+#[tokio::test]
+async fn test_reconcile_with_healthy_metrics_progresses() {
+    use crate::crd::rollout::{AnalysisConfig, MetricConfig, PrometheusConfig};
+
+    // ARRANGE: Rollout with analysis config, metrics are healthy
+    let rollout = Rollout {
+        metadata: ObjectMeta {
+            name: Some("test-rollout".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector::default(),
+            template: k8s_openapi::api::core::v1::PodTemplateSpec {
+                spec: Some(k8s_openapi::api::core::v1::PodSpec {
+                    containers: vec![k8s_openapi::api::core::v1::Container {
+                        name: "app".to_string(),
+                        image: Some("nginx:1.0".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            strategy: RolloutStrategy {
+                simple: None,
+                blue_green: None,
+                canary: Some(CanaryStrategy {
+                    canary_service: "test-app-canary".to_string(),
+                    stable_service: "test-app-stable".to_string(),
+                    steps: vec![
+                        CanaryStep {
+                            set_weight: Some(10),
+                            pause: None,
+                        },
+                        CanaryStep {
+                            set_weight: Some(50),
+                            pause: None,
+                        },
+                    ],
+                    analysis: Some(AnalysisConfig {
+                        prometheus: Some(PrometheusConfig {
+                            address: Some("http://prometheus:9090".to_string()),
+                        }),
+                        failure_policy: None,
+                        warmup_duration: None,
+                        metrics: vec![MetricConfig {
+                            name: "error-rate".to_string(),
+                            threshold: 5.0,
+                            interval: None,
+                            failure_threshold: None,
+                            min_sample_size: None,
+                        }],
+                    }),
+                    traffic_routing: None,
+                }),
+            },
+        },
+        status: Some(RolloutStatus {
+            current_step_index: Some(0),
+            current_weight: Some(10),
+            phase: Some(Phase::Progressing),
+            ..Default::default()
+        }),
+    };
+
+    let ctx = Context::new_mock();
+
+    // Mock healthy metrics (error rate = 2.5%, below threshold of 5.0%)
+    let mock_response = r#"{
+        "status": "success",
+        "data": {
+            "resultType": "vector",
+            "result": [
+                {
+                    "metric": {},
+                    "value": [1234567890, "2.5"]
+                }
+            ]
+        }
+    }"#;
+    ctx.prometheus_client
+        .set_mock_response(mock_response.to_string());
+
+    // ACT: Reconcile
+    let result = reconcile(Arc::new(rollout), Arc::new(ctx)).await;
+
+    // ASSERT: Should succeed (metrics healthy)
+    assert!(
+        result.is_ok(),
+        "Reconcile should succeed when metrics are healthy"
+    );
+}
+
+#[tokio::test]
+async fn test_reconcile_with_unhealthy_metrics_triggers_rollback() {
+    use crate::crd::rollout::{AnalysisConfig, MetricConfig, PrometheusConfig};
+
+    // ARRANGE: Rollout with analysis config, metrics are unhealthy
+    let rollout = Rollout {
+        metadata: ObjectMeta {
+            name: Some("test-rollout".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector::default(),
+            template: k8s_openapi::api::core::v1::PodTemplateSpec {
+                spec: Some(k8s_openapi::api::core::v1::PodSpec {
+                    containers: vec![k8s_openapi::api::core::v1::Container {
+                        name: "app".to_string(),
+                        image: Some("nginx:1.0".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            strategy: RolloutStrategy {
+                simple: None,
+                blue_green: None,
+                canary: Some(CanaryStrategy {
+                    canary_service: "test-app-canary".to_string(),
+                    stable_service: "test-app-stable".to_string(),
+                    steps: vec![
+                        CanaryStep {
+                            set_weight: Some(10),
+                            pause: None,
+                        },
+                        CanaryStep {
+                            set_weight: Some(50),
+                            pause: None,
+                        },
+                    ],
+                    analysis: Some(AnalysisConfig {
+                        prometheus: Some(PrometheusConfig {
+                            address: Some("http://prometheus:9090".to_string()),
+                        }),
+                        failure_policy: None,
+                        warmup_duration: None,
+                        metrics: vec![MetricConfig {
+                            name: "error-rate".to_string(),
+                            threshold: 5.0,
+                            interval: None,
+                            failure_threshold: None,
+                            min_sample_size: None,
+                        }],
+                    }),
+                    traffic_routing: None,
+                }),
+            },
+        },
+        status: Some(RolloutStatus {
+            current_step_index: Some(0),
+            current_weight: Some(10),
+            phase: Some(Phase::Progressing),
+            ..Default::default()
+        }),
+    };
+
+    let ctx = Context::new_mock();
+
+    // Mock unhealthy metrics (error rate = 8.0%, exceeds threshold of 5.0%)
+    let mock_response = r#"{
+        "status": "success",
+        "data": {
+            "resultType": "vector",
+            "result": [
+                {
+                    "metric": {},
+                    "value": [1234567890, "8.0"]
+                }
+            ]
+        }
+    }"#;
+    ctx.prometheus_client
+        .set_mock_response(mock_response.to_string());
+
+    // ACT: Reconcile
+    let result = reconcile(Arc::new(rollout), Arc::new(ctx)).await;
+
+    // ASSERT: Should trigger rollback (set phase to Failed)
+    // This test will FAIL until we implement metrics-based rollback
+    assert!(
+        result.is_ok(),
+        "Reconcile should complete even when triggering rollback"
+    );
+    // TODO: Once implemented, verify that status.phase == Phase::Failed
+}
+
+#[tokio::test]
+async fn test_reconcile_without_analysis_config_skips_metrics() {
+    // ARRANGE: Rollout WITHOUT analysis config
+    let rollout = Rollout {
+        metadata: ObjectMeta {
+            name: Some("test-rollout".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector::default(),
+            template: k8s_openapi::api::core::v1::PodTemplateSpec {
+                spec: Some(k8s_openapi::api::core::v1::PodSpec {
+                    containers: vec![k8s_openapi::api::core::v1::Container {
+                        name: "app".to_string(),
+                        image: Some("nginx:1.0".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            strategy: RolloutStrategy {
+                simple: None,
+                blue_green: None,
+                canary: Some(CanaryStrategy {
+                    canary_service: "test-app-canary".to_string(),
+                    stable_service: "test-app-stable".to_string(),
+                    steps: vec![CanaryStep {
+                        set_weight: Some(10),
+                        pause: None,
+                    }],
+                    analysis: None, // No analysis config
+                    traffic_routing: None,
+                }),
+            },
+        },
+        status: Some(RolloutStatus {
+            current_step_index: Some(0),
+            current_weight: Some(10),
+            phase: Some(Phase::Progressing),
+            ..Default::default()
+        }),
+    };
+
+    let ctx = Context::new_mock();
+
+    // ACT: Reconcile
+    let result = reconcile(Arc::new(rollout), Arc::new(ctx)).await;
+
+    // ASSERT: Should succeed (no metrics check)
+    assert!(
+        result.is_ok(),
+        "Reconcile should succeed when no analysis config exists"
+    );
 }

@@ -14,9 +14,7 @@ async fn run_integration_tests() {
     // Skip integration tests unless explicitly enabled
     // These tests require 'kind' to be installed and will create a real K8s cluster
     if std::env::var("KULTA_RUN_INTEGRATION_TESTS").is_err() {
-        println!(
-            "⏭️  Skipping integration tests (set KULTA_RUN_INTEGRATION_TESTS=1 to enable)"
-        );
+        println!("⏭️  Skipping integration tests (set KULTA_RUN_INTEGRATION_TESTS=1 to enable)");
         println!("   These tests require 'kind' to be installed.");
         return;
     }

@@ -36,6 +36,9 @@ pub enum ReconcileError {
 
     #[error("Invalid Rollout spec: {0}")]
     ValidationError(String),
+
+    #[error("Metrics evaluation failed: {0}")]
+    MetricsEvaluationFailed(String),
 }
 
 pub struct Context {
@@ -1148,6 +1151,67 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
         }
     }
 
+    // Evaluate metrics (if analysis config exists and rollout is progressing, and strategy is canary)
+    if let Some(current_status) = &rollout.status {
+        if current_status.phase == Some(Phase::Progressing) {
+            // Only evaluate metrics for canary strategy
+            if rollout.spec.strategy.canary.is_some() {
+                // Check metrics health
+                let is_healthy = evaluate_rollout_metrics(&rollout, &ctx).await?;
+
+                if !is_healthy {
+                    // Metrics unhealthy - trigger rollback
+                    warn!(
+                        rollout = ?name,
+                        "Metrics unhealthy, triggering rollback"
+                    );
+
+                    // Create failed status
+                    let failed_status = crate::crd::rollout::RolloutStatus {
+                        phase: Some(Phase::Failed),
+                        message: Some("Rollback triggered: metrics exceeded thresholds".to_string()),
+                        ..current_status.clone()
+                    };
+
+                    // Emit rollback CDEvent
+                    if let Err(e) = emit_status_change_event(
+                        &rollout,
+                        &rollout.status,
+                        &failed_status,
+                        &ctx.cdevents_sink,
+                    )
+                    .await
+                    {
+                        warn!(
+                            error = ?e,
+                            rollout = ?name,
+                            "Failed to emit rollback CDEvent (non-fatal)"
+                        );
+                    }
+
+                    // Update status to Failed
+                    use kube::api::{Patch, PatchParams};
+                    let rollout_api: Api<Rollout> = Api::namespaced(ctx.client.clone(), &namespace);
+                    let status_patch = serde_json::json!({
+                        "status": failed_status
+                    });
+
+                    rollout_api
+                        .patch_status(&name, &PatchParams::default(), &Patch::Merge(&status_patch))
+                        .await?;
+
+                    info!(
+                        rollout = ?name,
+                        "Rollout marked as Failed due to unhealthy metrics"
+                    );
+
+                    // Requeue to monitor if metrics recover
+                    return Ok(Action::requeue(Duration::from_secs(30)));
+                }
+            }
+        }
+    }
+
     // Check if promote annotation exists BEFORE computing status (to avoid race condition)
     let had_promote_annotation = has_promote_annotation(&rollout);
     let was_paused_before = rollout
@@ -1266,6 +1330,51 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
     // Calculate optimal requeue interval based on pause state
     let requeue_interval = calculate_requeue_interval_from_rollout(&rollout, &desired_status);
     Ok(Action::requeue(requeue_interval))
+}
+
+/// Evaluate rollout metrics against Prometheus thresholds
+///
+/// Checks if the canary revision is healthy based on the analysis config.
+/// Returns Ok(true) if healthy, Ok(false) if unhealthy.
+///
+/// # Arguments
+/// * `rollout` - The Rollout to evaluate
+/// * `ctx` - Controller context with PrometheusClient
+///
+/// # Returns
+/// * `Ok(true)` - All metrics healthy (or no analysis config)
+/// * `Ok(false)` - One or more metrics unhealthy
+/// * `Err(_)` - Query execution failed
+async fn evaluate_rollout_metrics(
+    rollout: &Rollout,
+    ctx: &Context,
+) -> Result<bool, ReconcileError> {
+    // Check if rollout has canary strategy with analysis config
+    let analysis_config = match &rollout.spec.strategy.canary {
+        Some(canary_strategy) => match &canary_strategy.analysis {
+            Some(analysis) => analysis,
+            None => {
+                // No analysis config - consider healthy (no constraints)
+                return Ok(true);
+            }
+        },
+        None => {
+            // No canary strategy - no metrics to check
+            return Ok(true);
+        }
+    };
+
+    // Get rollout name for Prometheus labels
+    let rollout_name = rollout.name_any();
+
+    // Evaluate all metrics
+    let is_healthy = ctx
+        .prometheus_client
+        .evaluate_all_metrics(&analysis_config.metrics, &rollout_name, "canary")
+        .await
+        .map_err(|e| ReconcileError::MetricsEvaluationFailed(e.to_string()))?;
+
+    Ok(is_healthy)
 }
 
 /// Calculate optimal requeue interval based on rollout pause state
