@@ -292,6 +292,10 @@ pub fn build_backend_refs_with_weights(rollout: &Rollout) -> Vec<HTTPBackendRef>
 /// Converts our simple HTTPBackendRef representation to the actual Gateway API
 /// HTTPRouteRulesBackendRefs type used in HTTPRoute resources.
 ///
+/// Supports both canary and blue-green strategies:
+/// - Canary: Gradual traffic shift based on step weights
+/// - Blue-green: 100/0 split, flips on promotion
+///
 /// # Returns
 /// Vec of HTTPRouteRulesBackendRefs with correct weights for current rollout step
 pub fn build_gateway_api_backend_refs(
@@ -299,10 +303,36 @@ pub fn build_gateway_api_backend_refs(
 ) -> Vec<gateway_api::apis::standard::httproutes::HTTPRouteRulesBackendRefs> {
     use gateway_api::apis::standard::httproutes::HTTPRouteRulesBackendRefs;
 
+    // Check for blue-green strategy first
+    if let Some(blue_green) = &rollout.spec.strategy.blue_green {
+        let (active_weight, preview_weight) = calculate_blue_green_weights(rollout);
+
+        return vec![
+            HTTPRouteRulesBackendRefs {
+                name: blue_green.active_service.clone(),
+                port: Some(80),
+                weight: Some(active_weight),
+                kind: Some("Service".to_string()),
+                group: Some("".to_string()),
+                namespace: None,
+                filters: None,
+            },
+            HTTPRouteRulesBackendRefs {
+                name: blue_green.preview_service.clone(),
+                port: Some(80),
+                weight: Some(preview_weight),
+                kind: Some("Service".to_string()),
+                group: Some("".to_string()),
+                namespace: None,
+                filters: None,
+            },
+        ];
+    }
+
     // Get canary strategy
     let canary_strategy = match &rollout.spec.strategy.canary {
         Some(strategy) => strategy,
-        None => return vec![], // No canary strategy
+        None => return vec![], // No canary or blue-green strategy
     };
 
     // Calculate current weights
@@ -328,6 +358,28 @@ pub fn build_gateway_api_backend_refs(
             filters: None,
         },
     ]
+}
+
+/// Calculate traffic weights for blue-green strategy
+///
+/// Returns (active_weight, preview_weight):
+/// - Preview phase: 100% active, 0% preview (testing preview env)
+/// - Completed phase: 0% active, 100% preview (promoted)
+/// - Other phases: 100% active, 0% preview (safe default)
+pub fn calculate_blue_green_weights(rollout: &Rollout) -> (i32, i32) {
+    use crate::crd::rollout::Phase;
+
+    let phase = rollout
+        .status
+        .as_ref()
+        .and_then(|s| s.phase.as_ref())
+        .cloned()
+        .unwrap_or(Phase::Initializing);
+
+    match phase {
+        Phase::Completed => (0, 100), // Promoted: all traffic to preview (new active)
+        _ => (100, 0),                // Preview/other: all traffic to active
+    }
 }
 
 /// Update HTTPRoute's backend refs with weighted backends from Rollout
@@ -1151,6 +1203,83 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
         }
     }
 
+    // Update HTTPRoute with weighted backends for blue-green (if configured)
+    if let Some(blue_green) = &rollout.spec.strategy.blue_green {
+        if let Some(traffic_routing) = &blue_green.traffic_routing {
+            if let Some(gateway_api_routing) = &traffic_routing.gateway_api {
+                let httproute_name = &gateway_api_routing.http_route;
+
+                info!(
+                    rollout = ?name,
+                    httproute = ?httproute_name,
+                    strategy = "blue-green",
+                    "Updating HTTPRoute with weighted backends"
+                );
+
+                // Build the weighted backend refs
+                let backend_refs = build_gateway_api_backend_refs(&rollout);
+
+                let patch_json = serde_json::json!({
+                    "spec": {
+                        "rules": [{
+                            "backendRefs": backend_refs
+                        }]
+                    }
+                });
+
+                use kube::api::{Patch, PatchParams};
+                use kube::core::DynamicObject;
+                use kube::discovery::ApiResource;
+
+                let ar = ApiResource {
+                    group: "gateway.networking.k8s.io".to_string(),
+                    version: "v1".to_string(),
+                    api_version: "gateway.networking.k8s.io/v1".to_string(),
+                    kind: "HTTPRoute".to_string(),
+                    plural: "httproutes".to_string(),
+                };
+
+                let httproute_api: Api<DynamicObject> =
+                    Api::namespaced_with(ctx.client.clone(), &namespace, &ar);
+
+                match httproute_api
+                    .patch(
+                        httproute_name,
+                        &PatchParams::default(),
+                        &Patch::Merge(&patch_json),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        info!(
+                            rollout = ?name,
+                            httproute = ?httproute_name,
+                            active_weight = backend_refs.first().and_then(|b| b.weight),
+                            preview_weight = backend_refs.get(1).and_then(|b| b.weight),
+                            "HTTPRoute updated successfully (blue-green)"
+                        );
+                    }
+                    Err(kube::Error::Api(err)) if err.code == 404 => {
+                        warn!(
+                            rollout = ?name,
+                            httproute = ?httproute_name,
+                            "HTTPRoute not found - skipping traffic routing update"
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            error = ?e,
+                            rollout = ?name,
+                            httproute = ?httproute_name,
+                            "Failed to patch HTTPRoute"
+                        );
+                        return Err(ReconcileError::KubeError(e));
+                    }
+                }
+            }
+        }
+    }
+
     // Evaluate metrics (if analysis config exists and rollout is progressing, and strategy is canary)
     if let Some(current_status) = &rollout.status {
         if current_status.phase == Some(Phase::Progressing) {
@@ -1169,7 +1298,9 @@ pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Actio
                     // Create failed status
                     let failed_status = crate::crd::rollout::RolloutStatus {
                         phase: Some(Phase::Failed),
-                        message: Some("Rollback triggered: metrics exceeded thresholds".to_string()),
+                        message: Some(
+                            "Rollback triggered: metrics exceeded thresholds".to_string(),
+                        ),
                         ..current_status.clone()
                     };
 

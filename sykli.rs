@@ -13,9 +13,11 @@ fn main() {
         .inputs(&["**/*.rs", "Cargo.toml", "Cargo.lock"]);
 
     // Lint
-    p.task("lint")
-        .run("cargo clippy -- -D warnings")
-        .inputs(&["**/*.rs", "Cargo.toml", "Cargo.lock"]);
+    p.task("lint").run("cargo clippy -- -D warnings").inputs(&[
+        "**/*.rs",
+        "Cargo.toml",
+        "Cargo.lock",
+    ]);
 
     // Build (depends on test and lint)
     p.task("build")

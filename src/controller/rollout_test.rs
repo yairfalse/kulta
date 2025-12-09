@@ -2837,3 +2837,147 @@ async fn test_evaluate_rollout_metrics_no_analysis_config() {
         Err(e) => panic!("Should succeed, got error: {:?}", e),
     }
 }
+
+// =============================================================================
+// HTTPRoute Traffic Splitting Tests
+// =============================================================================
+
+// TDD RED: Test blue-green builds HTTPRoute backend refs for active/preview
+#[tokio::test]
+async fn test_blue_green_builds_httproute_backend_refs() {
+    use crate::crd::rollout::{BlueGreenStrategy, GatewayAPIRouting, TrafficRouting};
+
+    // ARRANGE: Blue-green rollout in Preview phase (100% to active)
+    let rollout = Rollout {
+        metadata: ObjectMeta {
+            name: Some("bg-app".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector::default(),
+            template: k8s_openapi::api::core::v1::PodTemplateSpec::default(),
+            strategy: RolloutStrategy {
+                simple: None,
+                canary: None,
+                blue_green: Some(BlueGreenStrategy {
+                    active_service: "bg-app-active".to_string(),
+                    preview_service: "bg-app-preview".to_string(),
+                    auto_promotion_enabled: None,
+                    auto_promotion_seconds: None,
+                    traffic_routing: Some(TrafficRouting {
+                        gateway_api: Some(GatewayAPIRouting {
+                            http_route: "bg-app-route".to_string(),
+                        }),
+                    }),
+                    analysis: None,
+                }),
+            },
+        },
+        status: Some(RolloutStatus {
+            phase: Some(Phase::Preview),
+            ..Default::default()
+        }),
+    };
+
+    // ACT: Build gateway API backend refs
+    let backend_refs = build_gateway_api_backend_refs(&rollout);
+
+    // ASSERT: Should have 2 backends - active (100%) and preview (0%)
+    assert_eq!(
+        backend_refs.len(),
+        2,
+        "Should have active and preview backends"
+    );
+
+    let active = backend_refs
+        .iter()
+        .find(|b| b.name == "bg-app-active")
+        .expect("Should have active backend");
+    assert_eq!(
+        active.weight,
+        Some(100),
+        "Active should have 100% in Preview phase"
+    );
+
+    let preview = backend_refs
+        .iter()
+        .find(|b| b.name == "bg-app-preview")
+        .expect("Should have preview backend");
+    assert_eq!(
+        preview.weight,
+        Some(0),
+        "Preview should have 0% in Preview phase"
+    );
+}
+
+// TDD RED: Test blue-green after promotion (100% to preview, now active)
+#[tokio::test]
+async fn test_blue_green_httproute_after_promotion() {
+    use crate::crd::rollout::{BlueGreenStrategy, GatewayAPIRouting, TrafficRouting};
+
+    // ARRANGE: Blue-green rollout in Completed phase (promoted)
+    let rollout = Rollout {
+        metadata: ObjectMeta {
+            name: Some("bg-app".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas: 3,
+            selector: k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector::default(),
+            template: k8s_openapi::api::core::v1::PodTemplateSpec::default(),
+            strategy: RolloutStrategy {
+                simple: None,
+                canary: None,
+                blue_green: Some(BlueGreenStrategy {
+                    active_service: "bg-app-active".to_string(),
+                    preview_service: "bg-app-preview".to_string(),
+                    auto_promotion_enabled: None,
+                    auto_promotion_seconds: None,
+                    traffic_routing: Some(TrafficRouting {
+                        gateway_api: Some(GatewayAPIRouting {
+                            http_route: "bg-app-route".to_string(),
+                        }),
+                    }),
+                    analysis: None,
+                }),
+            },
+        },
+        status: Some(RolloutStatus {
+            phase: Some(Phase::Completed),
+            ..Default::default()
+        }),
+    };
+
+    // ACT: Build gateway API backend refs
+    let backend_refs = build_gateway_api_backend_refs(&rollout);
+
+    // ASSERT: After promotion, traffic goes to preview (which becomes new active)
+    assert_eq!(
+        backend_refs.len(),
+        2,
+        "Should have active and preview backends"
+    );
+
+    let active = backend_refs
+        .iter()
+        .find(|b| b.name == "bg-app-active")
+        .expect("Should have active backend");
+    assert_eq!(
+        active.weight,
+        Some(0),
+        "Old active should have 0% after promotion"
+    );
+
+    let preview = backend_refs
+        .iter()
+        .find(|b| b.name == "bg-app-preview")
+        .expect("Should have preview backend");
+    assert_eq!(
+        preview.weight,
+        Some(100),
+        "Preview should have 100% after promotion"
+    );
+}
