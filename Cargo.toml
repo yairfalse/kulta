@@ -48,6 +48,9 @@ async-trait = "0.1"
 reqwest = "0.12"
 toml = "0.8"
 
+# Kubernetes testing framework
+seppo = { path = "../seppo" }
+
 # CI pipeline definition
 [dependencies.sykli]
 path = "../sykli/sdk/rust"
