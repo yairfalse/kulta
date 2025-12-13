@@ -17,7 +17,7 @@ use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use kube::api::{DeleteParams, ObjectMeta};
 use kube::Api;
 use kulta::crd::rollout::{
-    CanaryStep, CanaryStrategy, Phase, Rollout, RolloutSpec, RolloutStrategy,
+    CanaryStep, CanaryStrategy, PauseDuration, Phase, Rollout, RolloutSpec, RolloutStrategy,
 };
 use seppo::Context;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -106,6 +106,62 @@ fn create_rollout(name: &str, namespace: &str, replicas: i32, image: &str) -> Ro
                         CanaryStep {
                             set_weight: Some(75),
                             pause: None,
+                        },
+                    ],
+                    traffic_routing: None,
+                    analysis: None,
+                }),
+            },
+        },
+        status: None,
+    }
+}
+
+/// Create a rollout with pauses at each step (for chaos tests that need to observe mid-rollout state)
+fn create_rollout_with_pauses(
+    name: &str,
+    namespace: &str,
+    replicas: i32,
+    image: &str,
+    pause_duration: &str,
+) -> Rollout {
+    Rollout {
+        metadata: ObjectMeta {
+            name: Some(name.to_string()),
+            namespace: Some(namespace.to_string()),
+            ..Default::default()
+        },
+        spec: RolloutSpec {
+            replicas,
+            selector: LabelSelector {
+                match_labels: Some([("app".to_string(), name.to_string())].into()),
+                ..Default::default()
+            },
+            template: create_pod_template(name, image),
+            strategy: RolloutStrategy {
+                simple: None,
+                blue_green: None,
+                canary: Some(CanaryStrategy {
+                    stable_service: format!("{}-stable", name),
+                    canary_service: format!("{}-canary", name),
+                    steps: vec![
+                        CanaryStep {
+                            set_weight: Some(25),
+                            pause: Some(PauseDuration {
+                                duration: Some(pause_duration.to_string()),
+                            }),
+                        },
+                        CanaryStep {
+                            set_weight: Some(50),
+                            pause: Some(PauseDuration {
+                                duration: Some(pause_duration.to_string()),
+                            }),
+                        },
+                        CanaryStep {
+                            set_weight: Some(75),
+                            pause: Some(PauseDuration {
+                                duration: Some(pause_duration.to_string()),
+                            }),
                         },
                     ],
                     traffic_routing: None,
@@ -386,20 +442,25 @@ async fn test_chaos_modify_during_rollout(ctx: Context) {
     let name = "chaos-modify";
     setup_services(&ctx, name).await;
 
-    // Create initial rollout
-    let rollout = create_rollout(name, &ctx.namespace, 3, "nginx:1.20");
+    // Create initial rollout with short pauses so we can observe Progressing state
+    // 5s pause is enough to catch the phase, but keeps test reasonably fast (15s total)
+    let rollout = create_rollout_with_pauses(name, &ctx.namespace, 3, "nginx:1.20", "5s");
     ctx.apply(&rollout).await.expect("Create rollout");
 
-    // Wait for Progressing
+    // Wait for Progressing - the pause ensures it stays in this state long enough
     wait_for_phase(&ctx, name, Phase::Progressing, 30)
         .await
         .expect("Should reach Progressing");
 
     println!("  Rollout progressing, now modifying spec...");
 
-    // Modify replicas while in progress
-    let modified = create_rollout(name, &ctx.namespace, 5, "nginx:1.20"); // Change replicas
-    ctx.apply(&modified).await.expect("Modify rollout");
+    // Modify replicas while in progress using patch
+    let patch = serde_json::json!({
+        "spec": { "replicas": 5 }
+    });
+    ctx.patch::<Rollout>(name, &patch)
+        .await
+        .expect("Modify rollout");
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -443,18 +504,44 @@ async fn test_chaos_rapid_image_updates(ctx: Context) {
     // Wait briefly for it to start
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Rapid-fire image updates
+    // Rapid-fire image updates using patch
     for version in 21..=25 {
         println!("  Updating to nginx:1.{}", version);
-        let updated = create_rollout(name, &ctx.namespace, 2, &format!("nginx:1.{}", version));
-        ctx.apply(&updated).await.expect("Update rollout");
+        let patch = serde_json::json!({
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [{
+                            "name": "app",
+                            "image": format!("nginx:1.{}", version)
+                        }]
+                    }
+                }
+            }
+        });
+        ctx.patch::<Rollout>(name, &patch)
+            .await
+            .expect("Update rollout");
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
     // Final update
     let final_image = "nginx:1.25";
-    let final_rollout = create_rollout(name, &ctx.namespace, 2, final_image);
-    ctx.apply(&final_rollout).await.expect("Final update");
+    let patch = serde_json::json!({
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [{
+                        "name": "app",
+                        "image": final_image
+                    }]
+                }
+            }
+        }
+    });
+    ctx.patch::<Rollout>(name, &patch)
+        .await
+        .expect("Final update");
 
     // Wait for eventual completion
     let completed = wait_for_phase(&ctx, name, Phase::Completed, 180).await;
@@ -666,12 +753,13 @@ async fn test_edge_high_replica_count(ctx: Context) {
     let name = "edge-high-replicas";
     setup_services(&ctx, name).await;
 
-    let rollout = create_rollout(name, &ctx.namespace, 100, "nginx:1.21");
+    // Use rollout with pauses so we can observe Progressing state
+    let rollout = create_rollout_with_pauses(name, &ctx.namespace, 100, "nginx:1.21", "5s");
     ctx.apply(&rollout)
         .await
         .expect("Create high-replica rollout");
 
-    // Just verify it starts processing without crashing
+    // Verify it starts processing without crashing
     let progressing = wait_for_phase(&ctx, name, Phase::Progressing, 30).await;
     assert!(progressing.is_some(), "Should start progressing");
 
@@ -753,9 +841,22 @@ async fn test_edge_same_image_update(ctx: Context) {
         .await
         .expect("Should complete");
 
-    // Apply same image
-    let same = create_rollout(name, &ctx.namespace, 2, "nginx:1.21");
-    ctx.apply(&same).await.expect("Apply same image");
+    // Patch with same image (should be no-op)
+    let patch = serde_json::json!({
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [{
+                        "name": "app",
+                        "image": "nginx:1.21"
+                    }]
+                }
+            }
+        }
+    });
+    ctx.patch::<Rollout>(name, &patch)
+        .await
+        .expect("Apply same image");
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -791,10 +892,31 @@ async fn test_perf_reconciliation_latency(ctx: Context) {
     for i in 0..5 {
         let start = Instant::now();
 
-        let rollout = create_rollout(name, &ctx.namespace, 2, &format!("nginx:1.{}", 20 + i));
-        ctx.apply(&rollout).await.expect("Create rollout");
+        let image = format!("nginx:1.{}", 20 + i);
+        if i == 0 {
+            // First iteration: create
+            let rollout = create_rollout(name, &ctx.namespace, 2, &image);
+            ctx.apply(&rollout).await.expect("Create rollout");
+        } else {
+            // Subsequent iterations: patch with new image to trigger new rollout
+            let patch = serde_json::json!({
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [{
+                                "name": "app",
+                                "image": image
+                            }]
+                        }
+                    }
+                }
+            });
+            ctx.patch::<Rollout>(name, &patch)
+                .await
+                .expect("Update rollout");
+        }
 
-        // Measure time to first status update
+        // Measure time to status update
         let status_start = Instant::now();
         loop {
             if let Ok(r) = ctx.get::<Rollout>(name).await {
