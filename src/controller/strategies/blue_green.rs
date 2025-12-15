@@ -48,8 +48,9 @@ impl RolloutStrategy for BlueGreenStrategyHandler {
         );
 
         // Build both ReplicaSets (active + preview) at full size
-        let (active_rs, preview_rs) = build_replicasets_for_blue_green(rollout, rollout.spec.replicas)
-            .map_err(|e| StrategyError::ReplicaSetReconciliationFailed(e.to_string()))?;
+        let (active_rs, preview_rs) =
+            build_replicasets_for_blue_green(rollout, rollout.spec.replicas)
+                .map_err(|e| StrategyError::ReplicaSetReconciliationFailed(e.to_string()))?;
 
         // Create ReplicaSet API client
         let rs_api: Api<ReplicaSet> = Api::namespaced(ctx.client.clone(), &namespace);
