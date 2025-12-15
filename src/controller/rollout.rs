@@ -442,11 +442,13 @@ pub fn calculate_traffic_weights(rollout: &Rollout) -> (i32, i32) {
         return (0, 100);
     }
 
-    // Get the canary weight from the current step
-    let canary_weight = canary_strategy.steps[current_step_index as usize]
+    // Get the canary weight from the current step (validated to be 0-100)
+    let raw_weight = canary_strategy.steps[current_step_index as usize]
         .set_weight
         .unwrap_or(0);
 
+    // Defensive clamp to 0-100 in case validation is bypassed
+    let canary_weight = raw_weight.clamp(0, 100);
     let stable_weight = 100 - canary_weight;
 
     (stable_weight, canary_weight)
