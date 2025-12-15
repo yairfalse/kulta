@@ -559,4 +559,43 @@ mod tests {
             Err(e) => panic!("Should evaluate successfully, got error: {}", e),
         }
     }
+
+    #[tokio::test]
+    async fn test_evaluate_metric_at_exactly_threshold_is_unhealthy() {
+        let client = PrometheusClient::new_mock();
+
+        // Mock response: error rate = 5.0% (exactly at threshold)
+        let mock_response = r#"{
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [
+                    {
+                        "metric": {},
+                        "value": [1234567890, "5.0"]
+                    }
+                ]
+            }
+        }"#;
+        client.set_mock_response(mock_response.to_string());
+
+        // Evaluate error-rate metric with threshold = 5.0
+        let rollout_name = "my-app";
+        let revision = "canary";
+        let threshold = 5.0;
+
+        let result = client
+            .evaluate_metric("error-rate", rollout_name, revision, threshold)
+            .await;
+
+        // Exactly at threshold should be UNHEALTHY (triggers rollback)
+        // This is intentional: value < threshold means healthy, value >= threshold means unhealthy
+        match result {
+            Ok(is_healthy) => assert!(
+                !is_healthy,
+                "Error rate exactly at threshold (5.0%) should be unhealthy"
+            ),
+            Err(e) => panic!("Should evaluate successfully, got error: {}", e),
+        }
+    }
 }
