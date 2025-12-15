@@ -265,7 +265,7 @@ mod tests {
                 phase: Some(Phase::Progressing),
                 current_step_index: Some(0),
                 current_weight: Some(weight),
-                replicas: replicas,
+                replicas,
                 ready_replicas: 0,
                 updated_replicas: 0,
                 message: None,
