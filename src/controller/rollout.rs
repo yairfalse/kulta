@@ -982,13 +982,18 @@ fn validate_rollout(rollout: &Rollout) -> Result<(), String> {
 
         // Validate each step
         for (i, step) in canary.steps.iter().enumerate() {
-            // Validate weight is in 0-100 range
-            if let Some(weight) = step.set_weight {
-                if !(0..=100).contains(&weight) {
-                    return Err(format!(
-                        "steps[{}].setWeight must be 0-100, got {}",
-                        i, weight
-                    ));
+            // Validate setWeight is required and in 0-100 range
+            match step.set_weight {
+                Some(weight) => {
+                    if !(0..=100).contains(&weight) {
+                        return Err(format!(
+                            "steps[{}].setWeight must be 0-100, got {}",
+                            i, weight
+                        ));
+                    }
+                }
+                None => {
+                    return Err(format!("steps[{}].setWeight is required", i));
                 }
             }
 

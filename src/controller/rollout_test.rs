@@ -2548,6 +2548,30 @@ async fn test_validate_rollout_rejects_empty_canary_steps() {
     );
 }
 
+#[tokio::test]
+async fn test_validate_rollout_requires_set_weight_on_steps() {
+    // ARRANGE: Create rollout with step missing setWeight
+    let mut rollout = create_test_rollout_with_canary();
+    rollout.spec.strategy.canary.as_mut().unwrap().steps = vec![CanaryStep {
+        set_weight: None, // Missing setWeight
+        pause: Some(PauseDuration {
+            duration: Some("30s".to_string()),
+        }),
+    }];
+
+    // ACT: Validate rollout
+    let result = validate_rollout(&rollout);
+
+    // ASSERT: Should fail validation - setWeight is required
+    assert!(result.is_err(), "Expected missing setWeight to be rejected");
+    let error = result.unwrap_err();
+    assert!(
+        error.contains("setWeight is required"),
+        "Error should mention required setWeight, got: {}",
+        error
+    );
+}
+
 // ============================================================================
 // Dynamic Requeue Interval Tests (TDD - RED Phase)
 // ============================================================================
