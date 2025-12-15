@@ -86,8 +86,8 @@ impl RolloutStrategy for SimpleStrategyHandler {
                 rollout.spec.replicas
             )),
             replicas: rollout.spec.replicas,
-            ready_replicas: 0,   // Will be updated by status computation
-            updated_replicas: 0, // Will be updated by status computation
+            ready_replicas: 0,
+            updated_replicas: 0,
             pause_start_time: None,
             decisions: vec![],
         }
