@@ -93,11 +93,14 @@ impl RolloutStrategy for SimpleStrategyHandler {
         }
     }
 
-    fn supports_metrics_analysis(&self) -> bool {
+    fn supports_metrics_analysis(&self, rollout: &Rollout) -> bool {
         // Simple strategy can support metrics analysis if configured
-        // NOTE: This returns false here because we need the rollout to check config.
-        // The actual check happens in reconcile() where we have access to the rollout.
-        false
+        rollout
+            .spec
+            .strategy
+            .simple
+            .analysis
+            .is_some()
     }
 
     fn supports_manual_promotion(&self) -> bool {
