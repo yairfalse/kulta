@@ -447,8 +447,8 @@ pub fn calculate_traffic_weights(rollout: &Rollout) -> (i32, i32) {
         .set_weight
         .unwrap_or(0);
 
-    // Defensive clamp to 0-100 in case validation is bypassed
-    let canary_weight = raw_weight.clamp(0, 100);
+    // Validation guarantees raw_weight is in 0-100
+    let canary_weight = raw_weight;
     let stable_weight = 100 - canary_weight;
 
     (stable_weight, canary_weight)
