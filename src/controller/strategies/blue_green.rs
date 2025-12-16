@@ -193,8 +193,8 @@ impl RolloutStrategy for BlueGreenStrategyHandler {
     }
 
     fn supports_metrics_analysis(&self) -> bool {
-        // Blue-green can support metrics analysis if configured
-        true
+        // Blue-green rollouts never reach the Progressing phase, so metrics analysis is not supported.
+        false
     }
 
     fn supports_manual_promotion(&self) -> bool {
