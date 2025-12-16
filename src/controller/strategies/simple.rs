@@ -93,14 +93,12 @@ impl RolloutStrategy for SimpleStrategyHandler {
         }
     }
 
-    fn supports_metrics_analysis(&self, rollout: &Rollout) -> bool {
-        // Simple strategy can support metrics analysis if configured
-        rollout
-            .spec
-            .strategy
-            .simple
-            .analysis
-            .is_some()
+    fn supports_metrics_analysis(&self) -> bool {
+        // Simple strategy doesn't support metrics analysis because:
+        // 1. It always completes immediately (no Progressing phase)
+        // 2. Metrics are only evaluated during Progressing phase
+        // Note: Even if analysis config exists in spec, it won't be used
+        false
     }
 
     fn supports_manual_promotion(&self) -> bool {

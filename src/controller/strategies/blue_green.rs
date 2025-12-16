@@ -3,17 +3,16 @@
 //! Maintains two full environments (active and preview).
 //! Traffic is 100% to active until promotion, then instant switch to preview.
 
-use super::{RolloutStrategy, StrategyError};
+use super::{reconcile_gateway_api_traffic, RolloutStrategy, StrategyError};
 use crate::controller::rollout::{
-    build_gateway_api_backend_refs, build_replicasets_for_blue_green, ensure_replicaset_exists,
-    initialize_rollout_status, Context,
+    build_replicasets_for_blue_green, ensure_replicaset_exists, has_promote_annotation, Context,
 };
-use crate::crd::rollout::{Rollout, RolloutStatus};
+use crate::crd::rollout::{Phase, Rollout, RolloutStatus};
 use async_trait::async_trait;
 use k8s_openapi::api::apps::v1::ReplicaSet;
 use kube::api::Api;
 use kube::ResourceExt;
-use tracing::{error, info, warn};
+use tracing::info;
 
 /// Blue-Green strategy handler
 ///
@@ -80,95 +79,63 @@ impl RolloutStrategy for BlueGreenStrategyHandler {
         rollout: &Rollout,
         ctx: &Context,
     ) -> Result<(), StrategyError> {
-        // Check if blue-green strategy has traffic routing configured
-        let blue_green = match &rollout.spec.strategy.blue_green {
-            Some(strategy) => strategy,
-            None => {
-                // No blue-green strategy defined (shouldn't happen if we're selected)
-                return Ok(());
-            }
-        };
-
-        let traffic_routing = match &blue_green.traffic_routing {
-            Some(routing) => routing,
-            None => {
-                // No traffic routing configured - this is OK, traffic routing is optional
-                return Ok(());
-            }
-        };
-
-        let gateway_api_routing = match &traffic_routing.gateway_api {
-            Some(routing) => routing,
-            None => {
-                // No Gateway API routing configured
-                return Ok(());
-            }
-        };
-
-        let namespace = rollout
-            .namespace()
-            .ok_or_else(|| StrategyError::MissingField("namespace".to_string()))?;
-        let name = rollout.name_any();
-        let httproute_name = &gateway_api_routing.http_route;
-
-        info!(
-            rollout = ?name,
-            httproute = ?httproute_name,
-            strategy = "blue-green",
-            "Updating HTTPRoute with weighted backends"
-        );
-
-        // Build the weighted backend refs (100/0 or 0/100 based on phase)
-        let backend_refs = build_gateway_api_backend_refs(rollout);
-
-        // Create JSON patch to update HTTPRoute's first rule's backendRefs
-        let patch_json = serde_json::json!({
-            "spec": {
-                "rules": [{
-                    "backendRefs": backend_refs
-                }]
-            }
-        });
-
-        // Create HTTPRoute API client using DynamicObject
-        use kube::api::{Api, Patch, PatchParams};
-        use kube::core::DynamicObject;
-        use kube::discovery::ApiResource;
-
-        let ar = ApiResource {
-            group: "gateway.networking.k8s.io".to_string(),
-            version: "v1".to_string(),
-            api_version: "gateway.networking.k8s.io/v1".to_string(),
-            kind: "HTTPRoute".to_string(),
-            plural: "httproutes".to_string(),
-        };
-
-        let httproute_api: Api<DynamicObject> =
-            Api::namespaced_with(ctx.client.clone(), &namespace, &ar);
-
-        // Apply the patch
-        match httproute_api
-            .patch(
-                httproute_name,
-                &PatchParams::default(),
-                &Patch::Merge(&patch_json),
-            )
-            .await
-        {
-            patch_httproute_with_logging(
-                &name,
-                &httproute_name,
-                &backend_refs,
-                res,
-                "blue-green",
-            )
-        }
+        // Use shared helper for Gateway API traffic routing
+        reconcile_gateway_api_traffic(rollout, ctx, "blue-green").await
     }
 
     fn compute_next_status(&self, rollout: &Rollout) -> RolloutStatus {
-        // For blue-green, use initialize_rollout_status which sets Preview phase
-        // The reconcile() loop will handle promotion logic
-        initialize_rollout_status(rollout)
+        // Check current status
+        let current_phase = rollout.status.as_ref().and_then(|s| s.phase.clone());
+
+        match current_phase {
+            // Already completed - stay completed
+            Some(Phase::Completed) => RolloutStatus {
+                phase: Some(Phase::Completed),
+                message: Some(
+                    "Blue-green rollout completed: preview promoted to active".to_string(),
+                ),
+                replicas: rollout.spec.replicas,
+                ..Default::default()
+            },
+
+            // In preview phase - check for promotion
+            Some(Phase::Preview) => {
+                if has_promote_annotation(rollout) {
+                    // Promote: transition to Completed
+                    info!(
+                        rollout = ?rollout.name_any(),
+                        "Blue-green promotion triggered via annotation"
+                    );
+                    RolloutStatus {
+                        phase: Some(Phase::Completed),
+                        message: Some(
+                            "Blue-green rollout completed: preview promoted to active".to_string(),
+                        ),
+                        replicas: rollout.spec.replicas,
+                        ..Default::default()
+                    }
+                } else {
+                    // Stay in preview, waiting for promotion
+                    RolloutStatus {
+                        phase: Some(Phase::Preview),
+                        message: Some(
+                            "Blue-green rollout: preview environment ready, awaiting promotion"
+                                .to_string(),
+                        ),
+                        replicas: rollout.spec.replicas,
+                        ..Default::default()
+                    }
+                }
+            }
+
+            // No status or other phase - initialize to Preview
+            _ => RolloutStatus {
+                phase: Some(Phase::Preview),
+                message: Some("Blue-green rollout: preview environment ready".to_string()),
+                replicas: rollout.spec.replicas,
+                ..Default::default()
+            },
+        }
     }
 
     fn supports_metrics_analysis(&self) -> bool {
@@ -231,9 +198,11 @@ mod tests {
     }
 
     #[test]
-    fn test_blue_green_strategy_supports_metrics_analysis() {
+    fn test_blue_green_strategy_does_not_support_metrics_analysis() {
         let strategy = BlueGreenStrategyHandler;
-        assert!(strategy.supports_metrics_analysis());
+        // Blue-green doesn't support metrics analysis because it never
+        // enters Progressing phase (goes directly to Preview)
+        assert!(!strategy.supports_metrics_analysis());
     }
 
     #[test]
@@ -243,7 +212,7 @@ mod tests {
     }
 
     #[test]
-    fn test_blue_green_strategy_compute_next_status() {
+    fn test_blue_green_strategy_compute_next_status_initializes_to_preview() {
         let rollout = create_blue_green_rollout(5);
         let strategy = BlueGreenStrategyHandler;
 
@@ -257,6 +226,74 @@ mod tests {
             Some(msg) => assert!(msg.contains("preview environment ready")),
             None => panic!("status should have a message"),
         }
+    }
+
+    #[test]
+    fn test_blue_green_strategy_stays_in_preview_without_annotation() {
+        let mut rollout = create_blue_green_rollout(5);
+        // Set status to Preview (already initialized)
+        rollout.status = Some(RolloutStatus {
+            phase: Some(Phase::Preview),
+            message: Some("Preview ready".to_string()),
+            replicas: 5,
+            ..Default::default()
+        });
+
+        let strategy = BlueGreenStrategyHandler;
+        let status = strategy.compute_next_status(&rollout);
+
+        // Should stay in Preview without promotion annotation
+        assert_eq!(status.phase, Some(Phase::Preview));
+        match status.message {
+            Some(msg) => assert!(msg.contains("awaiting promotion")),
+            None => panic!("status should have a message"),
+        }
+    }
+
+    #[test]
+    fn test_blue_green_strategy_promotes_to_completed_with_annotation() {
+        use std::collections::BTreeMap;
+
+        let mut rollout = create_blue_green_rollout(5);
+        // Set status to Preview
+        rollout.status = Some(RolloutStatus {
+            phase: Some(Phase::Preview),
+            message: Some("Preview ready".to_string()),
+            replicas: 5,
+            ..Default::default()
+        });
+        // Add promote annotation
+        let mut annotations = BTreeMap::new();
+        annotations.insert("kulta.io/promote".to_string(), "true".to_string());
+        rollout.metadata.annotations = Some(annotations);
+
+        let strategy = BlueGreenStrategyHandler;
+        let status = strategy.compute_next_status(&rollout);
+
+        // Should transition to Completed
+        assert_eq!(status.phase, Some(Phase::Completed));
+        match status.message {
+            Some(msg) => assert!(msg.contains("promoted to active")),
+            None => panic!("status should have a message"),
+        }
+    }
+
+    #[test]
+    fn test_blue_green_strategy_stays_completed() {
+        let mut rollout = create_blue_green_rollout(5);
+        // Set status to Completed
+        rollout.status = Some(RolloutStatus {
+            phase: Some(Phase::Completed),
+            message: Some("Completed".to_string()),
+            replicas: 5,
+            ..Default::default()
+        });
+
+        let strategy = BlueGreenStrategyHandler;
+        let status = strategy.compute_next_status(&rollout);
+
+        // Should stay Completed
+        assert_eq!(status.phase, Some(Phase::Completed));
     }
 
     // Note: reconcile_replicasets() and reconcile_traffic() require K8s API

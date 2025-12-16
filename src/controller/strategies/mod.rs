@@ -9,10 +9,16 @@ pub mod blue_green;
 pub mod canary;
 pub mod simple;
 
-use crate::controller::rollout::Context;
-use crate::crd::rollout::{Rollout, RolloutStatus};
+use crate::controller::rollout::{build_gateway_api_backend_refs, Context};
+use crate::crd::rollout::{GatewayAPIRouting, Rollout, RolloutStatus};
 use async_trait::async_trait;
+use gateway_api::apis::standard::httproutes::HTTPRouteRulesBackendRefs;
+use kube::api::{Api, Patch, PatchParams};
+use kube::core::DynamicObject;
+use kube::discovery::ApiResource;
+use kube::{Client, ResourceExt};
 use thiserror::Error;
+use tracing::{error, info, warn};
 
 /// Errors specific to strategy reconciliation
 #[derive(Debug, Error)]
@@ -28,6 +34,163 @@ pub enum StrategyError {
 
     #[error("Missing required field: {0}")]
     MissingField(String),
+}
+
+/// Patch HTTPRoute with weighted backend refs
+///
+/// Shared helper used by both canary and blue-green strategies to update
+/// Gateway API HTTPRoute resources with traffic weights.
+///
+/// # Arguments
+/// * `client` - Kubernetes client
+/// * `namespace` - Namespace of the HTTPRoute
+/// * `rollout_name` - Name of the rollout (for logging)
+/// * `gateway_api_routing` - Gateway API routing config containing HTTPRoute name
+/// * `backend_refs` - Weighted backend refs to apply
+/// * `strategy_name` - Strategy name for logging ("canary" or "blue-green")
+///
+/// # Returns
+/// * `Ok(())` - HTTPRoute patched or not found (non-fatal)
+/// * `Err(StrategyError)` - API error other than 404
+pub async fn patch_httproute_weights(
+    client: &Client,
+    namespace: &str,
+    rollout_name: &str,
+    gateway_api_routing: &GatewayAPIRouting,
+    backend_refs: &[HTTPRouteRulesBackendRefs],
+    strategy_name: &str,
+) -> Result<(), StrategyError> {
+    let httproute_name = &gateway_api_routing.http_route;
+
+    info!(
+        rollout = ?rollout_name,
+        httproute = ?httproute_name,
+        strategy = strategy_name,
+        "Updating HTTPRoute with weighted backends"
+    );
+
+    // Create JSON patch to update HTTPRoute's first rule's backendRefs
+    let patch_json = serde_json::json!({
+        "spec": {
+            "rules": [{
+                "backendRefs": backend_refs
+            }]
+        }
+    });
+
+    // Create HTTPRoute API client using DynamicObject
+    let ar = ApiResource {
+        group: "gateway.networking.k8s.io".to_string(),
+        version: "v1".to_string(),
+        api_version: "gateway.networking.k8s.io/v1".to_string(),
+        kind: "HTTPRoute".to_string(),
+        plural: "httproutes".to_string(),
+    };
+
+    let httproute_api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &ar);
+
+    // Apply the patch
+    match httproute_api
+        .patch(
+            httproute_name,
+            &PatchParams::default(),
+            &Patch::Merge(&patch_json),
+        )
+        .await
+    {
+        Ok(_) => {
+            info!(
+                rollout = ?rollout_name,
+                httproute = ?httproute_name,
+                weight_1 = backend_refs.first().and_then(|b| b.weight),
+                weight_2 = backend_refs.get(1).and_then(|b| b.weight),
+                strategy = strategy_name,
+                "HTTPRoute updated successfully"
+            );
+            Ok(())
+        }
+        Err(kube::Error::Api(err)) if err.code == 404 => {
+            // HTTPRoute not found - non-fatal, traffic routing is optional
+            warn!(
+                rollout = ?rollout_name,
+                httproute = ?httproute_name,
+                "HTTPRoute not found - skipping traffic routing update"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            error!(
+                error = ?e,
+                rollout = ?rollout_name,
+                httproute = ?httproute_name,
+                "Failed to patch HTTPRoute"
+            );
+            Err(StrategyError::TrafficReconciliationFailed(e.to_string()))
+        }
+    }
+}
+
+/// Extract Gateway API routing config from rollout
+///
+/// Returns None if traffic routing is not configured (which is valid).
+pub fn get_gateway_api_routing(rollout: &Rollout) -> Option<&GatewayAPIRouting> {
+    // Try canary strategy first
+    if let Some(canary) = &rollout.spec.strategy.canary {
+        if let Some(traffic_routing) = &canary.traffic_routing {
+            if let Some(gateway_api) = &traffic_routing.gateway_api {
+                return Some(gateway_api);
+            }
+        }
+    }
+
+    // Try blue-green strategy
+    if let Some(blue_green) = &rollout.spec.strategy.blue_green {
+        if let Some(traffic_routing) = &blue_green.traffic_routing {
+            if let Some(gateway_api) = &traffic_routing.gateway_api {
+                return Some(gateway_api);
+            }
+        }
+    }
+
+    None
+}
+
+/// Reconcile traffic routing for strategies that use Gateway API
+///
+/// Shared implementation that extracts routing config and patches HTTPRoute.
+/// Used by canary and blue-green strategies.
+pub async fn reconcile_gateway_api_traffic(
+    rollout: &Rollout,
+    ctx: &Context,
+    strategy_name: &str,
+) -> Result<(), StrategyError> {
+    let namespace = rollout
+        .namespace()
+        .ok_or_else(|| StrategyError::MissingField("namespace".to_string()))?;
+    let name = rollout.name_any();
+
+    // Get Gateway API routing config (returns None if not configured)
+    let gateway_api_routing = match get_gateway_api_routing(rollout) {
+        Some(routing) => routing,
+        None => {
+            // No traffic routing configured - this is OK, traffic routing is optional
+            return Ok(());
+        }
+    };
+
+    // Build the weighted backend refs
+    let backend_refs = build_gateway_api_backend_refs(rollout);
+
+    // Patch HTTPRoute with weights
+    patch_httproute_weights(
+        &ctx.client,
+        &namespace,
+        &name,
+        gateway_api_routing,
+        &backend_refs,
+        strategy_name,
+    )
+    .await
 }
 
 /// Strategy trait for different rollout types
