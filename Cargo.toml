@@ -47,7 +47,6 @@ async-trait = "0.1"
 serde_yaml = "0.9"
 
 # Integration test dependencies
-reqwest = "0.12"
 toml = "0.8"
 
 # Kubernetes testing framework
