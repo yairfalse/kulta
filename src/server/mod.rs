@@ -1,4 +1,4 @@
-//! HTTP server for health and metrics endpoints
+//! HTTP server for health endpoints
 //!
 //! Provides Kubernetes health probes:
 //! - `/healthz` - Liveness probe (process is running)
