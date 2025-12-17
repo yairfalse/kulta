@@ -6,9 +6,13 @@ use kulta::controller::cdevents::CDEventsSink;
 use kulta::controller::prometheus::PrometheusClient;
 use kulta::controller::{reconcile, Context, ReconcileError};
 use kulta::crd::rollout::Rollout;
+use kulta::server::{run_health_server, ReadinessState};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+
+/// Default port for health endpoints
+const HEALTH_PORT: u16 = 8080;
 
 /// Error policy for the controller
 ///
@@ -31,8 +35,26 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting KULTA progressive delivery controller");
 
+    // Create readiness state (initially not ready)
+    let readiness = ReadinessState::new();
+
+    // Start health server in background
+    let health_readiness = readiness.clone();
+    tokio::spawn(async move {
+        if let Err(e) = run_health_server(HEALTH_PORT, health_readiness).await {
+            error!(error = %e, "Health server failed");
+        }
+    });
+    info!(port = HEALTH_PORT, "Health server started");
+
     // Create Kubernetes client
-    let client = Client::try_default().await?;
+    let client = match Client::try_default().await {
+        Ok(c) => c,
+        Err(e) => {
+            error!(error = %e, "Failed to create Kubernetes client");
+            return Err(e.into());
+        }
+    };
 
     info!("Connected to Kubernetes cluster");
 
@@ -64,7 +86,9 @@ async fn main() -> anyhow::Result<()> {
         prometheus_client,
     ));
 
-    info!("Starting Rollout controller");
+    // Mark as ready - controller is initialized and about to start
+    readiness.set_ready();
+    info!("Controller ready, starting reconciliation loop");
 
     // Run the controller
     Controller::new(rollouts, watcher::Config::default())
@@ -72,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
         .for_each(|res| async move {
             match res {
                 Ok(o) => info!("Reconciled: {:?}", o),
-                Err(e) => error!("Reconcile error: {:?}", e),
+                Err(e) => warn!("Reconcile failed: {:?}", e),
             }
         })
         .await;
