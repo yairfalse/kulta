@@ -5,6 +5,34 @@
 use super::*;
 use std::time::Duration;
 
+/// Wait for server to be ready with exponential backoff
+/// Returns Ok(()) when server responds, Err after max retries
+async fn wait_for_server(port: u16, max_retries: u32) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(100))
+        .build()
+        .unwrap();
+
+    let mut delay = Duration::from_millis(10);
+    for attempt in 0..max_retries {
+        match client
+            .get(format!("http://127.0.0.1:{}/healthz", port))
+            .send()
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(_) => {
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay * 2, Duration::from_millis(500));
+                if attempt == max_retries - 1 {
+                    return Err(format!("Server not ready after {} attempts", max_retries));
+                }
+            }
+        }
+    }
+    Err("Server not ready".to_string())
+}
+
 /// TDD RED: Test that health server starts and /healthz returns 200
 #[tokio::test]
 async fn test_healthz_returns_200() {
@@ -17,8 +45,10 @@ async fn test_healthz_returns_200() {
     let server_handle =
         tokio::spawn(async move { run_health_server(port, server_readiness).await });
 
-    // Give server time to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Wait for server to be ready (robust retry loop)
+    wait_for_server(port, 10)
+        .await
+        .expect("Server should start");
 
     // ACT: Make request to /healthz
     let client = reqwest::Client::new();
@@ -50,7 +80,10 @@ async fn test_readyz_returns_503_when_not_ready() {
     let server_handle =
         tokio::spawn(async move { run_health_server(port, server_readiness).await });
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Wait for server to be ready (robust retry loop)
+    wait_for_server(port, 10)
+        .await
+        .expect("Server should start");
 
     // ACT: Make request to /readyz
     let client = reqwest::Client::new();
@@ -86,7 +119,10 @@ async fn test_readyz_returns_200_when_ready() {
     let server_handle =
         tokio::spawn(async move { run_health_server(port, server_readiness).await });
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Wait for server to be ready (robust retry loop)
+    wait_for_server(port, 10)
+        .await
+        .expect("Server should start");
 
     // ACT: Make request to /readyz
     let client = reqwest::Client::new();

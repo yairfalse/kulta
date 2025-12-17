@@ -80,9 +80,10 @@ pub async fn run_health_server(port: u16, readiness: ReadinessState) -> Result<(
         .with_state(readiness);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    info!(port = %port, "Starting health server");
-
     let listener = TcpListener::bind(addr).await?;
+    // Log after successful bind - server is actually listening
+    info!(port = %port, "Health server listening");
+
     axum::serve(listener, app)
         .await
         .map_err(std::io::Error::other)
