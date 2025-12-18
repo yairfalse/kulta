@@ -3032,3 +3032,65 @@ async fn test_blue_green_httproute_after_promotion() {
         "Preview should have 100% after promotion"
     );
 }
+
+/// Test Context.should_reconcile without leader state
+#[tokio::test]
+async fn test_context_should_reconcile_without_leader_state() {
+    // ARRANGE: Create context without leader election
+    let ctx = Context::new_mock();
+
+    // ACT & ASSERT: Should always reconcile in single instance mode
+    assert!(
+        ctx.should_reconcile(),
+        "Without leader election, should always reconcile"
+    );
+}
+
+/// Test Context.should_reconcile with leader state - not leader
+#[tokio::test]
+async fn test_context_should_not_reconcile_when_not_leader() {
+    // ARRANGE: Create context with leader state (not leader by default)
+    let ctx = Context::new_mock();
+
+    // Create leader state (starts as not leader)
+    let leader_state = crate::server::LeaderState::new();
+
+    // Create a new context with leader state manually
+    let ctx_with_leader = Context {
+        client: ctx.client,
+        cdevents_sink: ctx.cdevents_sink,
+        prometheus_client: ctx.prometheus_client,
+        leader_state: Some(leader_state),
+    };
+
+    // ACT & ASSERT: Should not reconcile when not leader
+    assert!(
+        !ctx_with_leader.should_reconcile(),
+        "When leader election enabled but not leader, should not reconcile"
+    );
+}
+
+/// Test Context.should_reconcile with leader state - is leader
+#[tokio::test]
+async fn test_context_should_reconcile_when_leader() {
+    // ARRANGE: Create context with leader state set to leader
+    let ctx = Context::new_mock();
+
+    // Create leader state and set as leader
+    let leader_state = crate::server::LeaderState::new();
+    leader_state.set_leader(true);
+
+    // Create a new context with leader state manually
+    let ctx_with_leader = Context {
+        client: ctx.client,
+        cdevents_sink: ctx.cdevents_sink,
+        prometheus_client: ctx.prometheus_client,
+        leader_state: Some(leader_state),
+    };
+
+    // ACT & ASSERT: Should reconcile when leader
+    assert!(
+        ctx_with_leader.should_reconcile(),
+        "When leader election enabled and is leader, should reconcile"
+    );
+}
