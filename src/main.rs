@@ -18,8 +18,10 @@ const HEALTH_PORT: u16 = 8080;
 ///
 /// Determines how to handle reconciliation errors:
 /// - Requeue after delay (exponential backoff)
+///
+/// Uses `warn!` since reconciliation errors are expected and trigger retries.
 pub fn error_policy(_rollout: Arc<Rollout>, error: &ReconcileError, _ctx: Arc<Context>) -> Action {
-    error!("Reconcile error: {:?}", error);
+    warn!("Reconcile error (will retry): {:?}", error);
     Action::requeue(Duration::from_secs(10))
 }
 
@@ -42,10 +44,10 @@ async fn main() -> anyhow::Result<()> {
     let health_readiness = readiness.clone();
     let health_handle = tokio::spawn(async move {
         if let Err(e) = run_health_server(HEALTH_PORT, health_readiness).await {
-            error!(error = %e, "Health server failed");
+            warn!(error = %e, "Health server failed");
         }
     });
-    info!(port = HEALTH_PORT, "Health server started");
+    info!(port = HEALTH_PORT, "Health server task spawned");
 
     // Create Kubernetes client
     let client = match Client::try_default().await {
@@ -93,13 +95,14 @@ async fn main() -> anyhow::Result<()> {
     info!("Controller ready, starting reconciliation loop");
 
     // Create the controller stream
+    // Note: error_policy already logs errors with warn!, so we only log success here
     let controller = Controller::new(rollouts, watcher::Config::default())
         .run(reconcile, error_policy, ctx)
         .for_each(|res| async move {
-            match res {
-                Ok(o) => info!("Reconciled: {:?}", o),
-                Err(e) => warn!("Reconcile failed: {:?}", e),
+            if let Ok(o) = res {
+                info!("Reconciled: {:?}", o);
             }
+            // Errors are logged in error_policy, no duplicate logging
         });
 
     // Run controller until shutdown signal received
