@@ -128,13 +128,21 @@ async fn main() -> anyhow::Result<()> {
         PrometheusClient::new(prometheus_address)
     };
 
-    // Create controller context with leader state
-    let ctx = Arc::new(Context::new_with_leader(
-        client.clone(),
-        cdevents_sink,
-        prometheus_client,
-        leader_state.clone(),
-    ));
+    // Create controller context
+    let ctx = if leader_election_enabled {
+        Arc::new(Context::new_with_leader(
+            client.clone(),
+            cdevents_sink,
+            prometheus_client,
+            leader_state.clone(),
+        ))
+    } else {
+        Arc::new(Context::new(
+            client.clone(),
+            cdevents_sink,
+            prometheus_client,
+        ))
+    };
 
     // Mark as ready - controller is initialized and about to start
     readiness.set_ready();
