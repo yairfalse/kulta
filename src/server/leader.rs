@@ -192,8 +192,19 @@ async fn try_acquire_or_renew(
                 }),
             };
 
-            api.create(&PostParams::default(), &lease).await?;
-            Ok(true)
+            match api.create(&PostParams::default(), &lease).await {
+                Ok(_) => Ok(true),
+                // If another replica created the lease first, treat it as a normal race
+                // and retry acquisition logic on the next interval.
+                Err(kube::Error::Api(api_err)) if api_err.code == 409 => {
+                    info!(
+                        holder_id = %config.holder_id,
+                        "Lease already created by another holder; will retry acquisition on next interval"
+                    );
+                    Ok(false)
+                }
+                Err(e) => Err(e),
+            }
         }
         Err(e) => Err(e),
     }
