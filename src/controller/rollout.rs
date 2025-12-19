@@ -1,6 +1,7 @@
 use crate::controller::cdevents::emit_status_change_event;
 use crate::controller::prometheus::PrometheusClient;
 use crate::crd::rollout::{Phase, Rollout, RolloutStatus};
+use crate::server::LeaderState;
 use chrono::{DateTime, Utc};
 use k8s_openapi::api::apps::v1::{ReplicaSet, ReplicaSetSpec};
 use k8s_openapi::api::core::v1::PodTemplateSpec;
@@ -15,7 +16,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Error)]
 pub enum ReconcileError {
@@ -48,9 +49,13 @@ pub struct Context {
     pub client: kube::Client,
     pub cdevents_sink: Arc<crate::controller::cdevents::CDEventsSink>,
     pub prometheus_client: Arc<PrometheusClient>,
+    /// Optional leader state for multi-replica deployments
+    /// When Some, reconciliation is skipped if not the leader
+    pub leader_state: Option<LeaderState>,
 }
 
 impl Context {
+    /// Create a new Context without leader election (single instance mode)
     pub fn new(
         client: kube::Client,
         cdevents_sink: crate::controller::cdevents::CDEventsSink,
@@ -60,6 +65,37 @@ impl Context {
             client,
             cdevents_sink: Arc::new(cdevents_sink),
             prometheus_client: Arc::new(prometheus_client),
+            leader_state: None,
+        }
+    }
+
+    /// Create a new Context with leader election support
+    ///
+    /// When leader_state is provided, reconciliation will check if this
+    /// instance is the leader before performing any work.
+    pub fn new_with_leader(
+        client: kube::Client,
+        cdevents_sink: crate::controller::cdevents::CDEventsSink,
+        prometheus_client: PrometheusClient,
+        leader_state: LeaderState,
+    ) -> Self {
+        Context {
+            client,
+            cdevents_sink: Arc::new(cdevents_sink),
+            prometheus_client: Arc::new(prometheus_client),
+            leader_state: Some(leader_state),
+        }
+    }
+
+    /// Check if this instance should reconcile
+    ///
+    /// Returns true if:
+    /// - No leader election configured (single instance mode)
+    /// - Leader election enabled and this instance is the leader
+    pub fn should_reconcile(&self) -> bool {
+        match &self.leader_state {
+            None => true, // No leader election - always reconcile
+            Some(state) => state.is_leader(),
         }
     }
 
@@ -78,6 +114,23 @@ impl Context {
             client,
             cdevents_sink: Arc::new(crate::controller::cdevents::CDEventsSink::new_mock()),
             prometheus_client: Arc::new(PrometheusClient::new_mock()),
+            leader_state: None,
+        }
+    }
+
+    /// Create a mock Context with leader election enabled
+    ///
+    /// Use this instead of direct struct initialization to avoid
+    /// maintenance burden when Context fields change.
+    #[cfg(test)]
+    #[allow(clippy::unwrap_used)] // Test helper - panicking is acceptable
+    pub fn new_mock_with_leader(leader_state: LeaderState) -> Self {
+        let mock = Self::new_mock();
+        Context {
+            client: mock.client,
+            cdevents_sink: mock.cdevents_sink,
+            prometheus_client: mock.prometheus_client,
+            leader_state: Some(leader_state),
         }
     }
 }
@@ -1045,6 +1098,13 @@ fn validate_rollout(rollout: &Rollout) -> Result<(), String> {
 /// * `Ok(Action)` - Next reconciliation action (requeue after 5 minutes)
 /// * `Err(ReconcileError)` - Reconciliation error
 pub async fn reconcile(rollout: Arc<Rollout>, ctx: Arc<Context>) -> Result<Action, ReconcileError> {
+    // Check if we should reconcile (leader election)
+    if !ctx.should_reconcile() {
+        // Not the leader - skip reconciliation, requeue later to check again
+        debug!(rollout = ?rollout.name_any(), "Skipping reconciliation - not leader");
+        return Ok(Action::requeue(Duration::from_secs(5)));
+    }
+
     // Validate rollout has required fields
     let namespace = rollout
         .namespace()
