@@ -1336,6 +1336,14 @@ async fn evaluate_rollout_metrics(
                     );
                     return Ok(true);
                 }
+            } else {
+                // Warmup is configured but step_start_time is missing or invalid.
+                // Treat this as if warmup just started: skip analysis for now.
+                warn!(
+                    rollout = rollout.name_any(),
+                    "Warmup duration is configured but step_start_time is missing or invalid; skipping metrics analysis and treating warmup as just started"
+                );
+                return Ok(true);
             }
         }
     }
