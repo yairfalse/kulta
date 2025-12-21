@@ -30,8 +30,23 @@ fn is_leader_election_enabled() -> bool {
 /// - Requeue after delay (exponential backoff)
 ///
 /// Uses `warn!` since reconciliation errors are expected and trigger retries.
-pub fn error_policy(_rollout: Arc<Rollout>, error: &ReconcileError, _ctx: Arc<Context>) -> Action {
+pub fn error_policy(rollout: Arc<Rollout>, error: &ReconcileError, ctx: Arc<Context>) -> Action {
     warn!("Reconcile error (will retry): {:?}", error);
+
+    // Record error metric
+    if let Some(ref metrics) = ctx.metrics {
+        // Determine strategy from rollout spec for metric labeling
+        let strategy = if rollout.spec.strategy.simple.is_some() {
+            "simple"
+        } else if rollout.spec.strategy.blue_green.is_some() {
+            "blue_green"
+        } else {
+            "canary"
+        };
+        // Duration unknown for errors (didn't complete), use 0
+        metrics.record_reconciliation_error(strategy, 0.0);
+    }
+
     Action::requeue(Duration::from_secs(10))
 }
 
@@ -133,19 +148,21 @@ async fn main() -> anyhow::Result<()> {
         PrometheusClient::new(prometheus_address)
     };
 
-    // Create controller context
+    // Create controller context (with metrics for observability)
     let ctx = if leader_election_enabled {
         Arc::new(Context::new_with_leader(
             client.clone(),
             cdevents_sink,
             prometheus_client,
             leader_state.clone(),
+            Some(metrics.clone()),
         ))
     } else {
         Arc::new(Context::new(
             client.clone(),
             cdevents_sink,
             prometheus_client,
+            Some(metrics.clone()),
         ))
     };
 
