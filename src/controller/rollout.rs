@@ -1320,13 +1320,7 @@ async fn evaluate_rollout_metrics(
                 .and_then(|s| s.step_start_time.as_ref())
                 .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
                 .map(|dt| dt.with_timezone(&Utc))
-                .or_else(|| {
-                    rollout
-                        .meta()
-                        .creation_timestamp
-                        .as_ref()
-                        .map(|t| t.0)
-                });
+                .or_else(|| rollout.meta().creation_timestamp.as_ref().map(|t| t.0));
 
             if let Some(start_time) = step_start_time {
                 let now = Utc::now();

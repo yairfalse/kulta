@@ -3,6 +3,7 @@
 //! TDD Cycle 1: Health server responds to /healthz
 
 use super::*;
+use crate::server::create_metrics;
 use std::time::Duration;
 
 /// Wait for server to be ready with retry logic
@@ -36,12 +37,16 @@ async fn wait_for_server(port: u16, max_retries: u32) -> reqwest::Client {
 async fn test_healthz_returns_200() {
     // ARRANGE: Create readiness state and start server
     let readiness = ReadinessState::new();
+    let metrics = create_metrics().expect("create metrics");
     let port = 18080; // Use high port for tests
 
     // Start server in background
     let server_readiness = readiness.clone();
+    let server_metrics = metrics.clone();
     let server_handle =
-        tokio::spawn(async move { run_health_server(port, server_readiness).await });
+        tokio::spawn(
+            async move { run_health_server(port, server_readiness, server_metrics).await },
+        );
 
     // Wait for server to be ready (with retry)
     let client = wait_for_server(port, 10).await;
@@ -66,14 +71,18 @@ async fn test_healthz_returns_200() {
 async fn test_readyz_returns_503_when_not_ready() {
     // ARRANGE: Create readiness state (NOT ready by default)
     let readiness = ReadinessState::new();
+    let metrics = create_metrics().expect("create metrics");
     assert!(!readiness.is_ready(), "Should start as not ready");
 
     let port = 18081;
 
     // Start server in background
     let server_readiness = readiness.clone();
+    let server_metrics = metrics.clone();
     let server_handle =
-        tokio::spawn(async move { run_health_server(port, server_readiness).await });
+        tokio::spawn(
+            async move { run_health_server(port, server_readiness, server_metrics).await },
+        );
 
     // Wait for server to be ready (with retry)
     let client = wait_for_server(port, 10).await;
@@ -101,6 +110,7 @@ async fn test_readyz_returns_503_when_not_ready() {
 async fn test_readyz_returns_200_when_ready() {
     // ARRANGE: Create readiness state and mark as ready
     let readiness = ReadinessState::new();
+    let metrics = create_metrics().expect("create metrics");
     readiness.set_ready();
     assert!(readiness.is_ready(), "Should be ready after set_ready()");
 
@@ -108,8 +118,11 @@ async fn test_readyz_returns_200_when_ready() {
 
     // Start server in background
     let server_readiness = readiness.clone();
+    let server_metrics = metrics.clone();
     let server_handle =
-        tokio::spawn(async move { run_health_server(port, server_readiness).await });
+        tokio::spawn(
+            async move { run_health_server(port, server_readiness, server_metrics).await },
+        );
 
     // Wait for server to be ready (with retry)
     let client = wait_for_server(port, 10).await;
@@ -147,4 +160,62 @@ fn test_readiness_state_transitions() {
     // Clone should share state
     let cloned = state.clone();
     assert!(cloned.is_ready());
+}
+
+/// Test that /metrics returns Prometheus format
+#[tokio::test]
+async fn test_metrics_returns_prometheus_format() {
+    // ARRANGE: Create readiness state and metrics
+    let readiness = ReadinessState::new();
+    let metrics = create_metrics().expect("create metrics");
+    let port = 18083;
+
+    // Record some metrics so they appear in output
+    metrics.record_reconciliation_success("canary", 0.5);
+
+    // Start server in background
+    let server_readiness = readiness.clone();
+    let server_metrics = metrics.clone();
+    let server_handle =
+        tokio::spawn(
+            async move { run_health_server(port, server_readiness, server_metrics).await },
+        );
+
+    // Wait for server to be ready (with retry)
+    let client = wait_for_server(port, 10).await;
+
+    // ACT: Make request to /metrics
+    let response = client
+        .get(format!("http://127.0.0.1:{}/metrics", port))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .expect("Failed to connect to metrics endpoint");
+
+    // ASSERT: Should return 200 OK with Prometheus content type
+    assert_eq!(response.status(), 200, "Metrics should return 200");
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .expect("should have content-type")
+        .to_str()
+        .expect("content-type should be string");
+    assert!(
+        content_type.contains("text/plain"),
+        "Should be text/plain for Prometheus"
+    );
+
+    // Check body contains our metrics
+    let body = response.text().await.expect("should have body");
+    assert!(
+        body.contains("kulta_reconciliations_total"),
+        "Should contain reconciliations counter"
+    );
+    assert!(
+        body.contains("kulta_reconciliation_duration_seconds"),
+        "Should contain duration histogram"
+    );
+
+    server_handle.abort();
 }

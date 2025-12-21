@@ -46,6 +46,9 @@ axum = "0.8"
 # Async trait support for strategy pattern
 async-trait = "0.1"
 
+# Prometheus metrics
+prometheus = "0.13"
+
 [dev-dependencies]
 serde_yaml = "0.9"
 

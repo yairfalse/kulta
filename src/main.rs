@@ -7,8 +7,8 @@ use kulta::controller::prometheus::PrometheusClient;
 use kulta::controller::{reconcile, Context, ReconcileError};
 use kulta::crd::rollout::Rollout;
 use kulta::server::{
-    run_health_server, run_leader_election, shutdown_channel, wait_for_signal, LeaderConfig,
-    LeaderState, ReadinessState,
+    create_metrics, run_health_server, run_leader_election, shutdown_channel, wait_for_signal,
+    LeaderConfig, LeaderState, ReadinessState,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -53,17 +53,22 @@ async fn main() -> anyhow::Result<()> {
     // Create readiness state (initially not ready)
     let readiness = ReadinessState::new();
 
+    // Create metrics registry
+    let metrics = create_metrics().expect("Failed to create metrics registry");
+    info!("Prometheus metrics registry initialized");
+
     // Create leader state
     let leader_state = LeaderState::new();
 
     // Start health server in background
     let health_readiness = readiness.clone();
+    let health_metrics = metrics.clone();
     let health_handle = tokio::spawn(async move {
-        if let Err(e) = run_health_server(HEALTH_PORT, health_readiness).await {
+        if let Err(e) = run_health_server(HEALTH_PORT, health_readiness, health_metrics).await {
             warn!(error = %e, "Health server failed");
         }
     });
-    info!(port = HEALTH_PORT, "Health server task spawned");
+    info!(port = HEALTH_PORT, "Health and metrics server task spawned");
 
     // Create Kubernetes client
     let client = match Client::try_default().await {
