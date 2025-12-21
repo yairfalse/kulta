@@ -1313,13 +1313,20 @@ async fn evaluate_rollout_metrics(
     // Check if warmup period has elapsed
     if let Some(warmup_str) = &analysis_config.warmup_duration {
         if let Some(warmup_duration) = parse_duration(warmup_str) {
-            // Get step start time from status
+            // Get step start time from status, or fall back to rollout creation time
             let step_start_time = rollout
                 .status
                 .as_ref()
                 .and_then(|s| s.step_start_time.as_ref())
                 .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
-                .map(|dt| dt.with_timezone(&Utc));
+                .map(|dt| dt.with_timezone(&Utc))
+                .or_else(|| {
+                    rollout
+                        .meta()
+                        .creation_timestamp
+                        .as_ref()
+                        .map(|t| t.0)
+                });
 
             if let Some(start_time) = step_start_time {
                 let now = Utc::now();
